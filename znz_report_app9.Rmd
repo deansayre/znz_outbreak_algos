@@ -1,0 +1,187 @@
+---
+title: "Assessment of outbreak detection algorithms: Zanzibar, 2019--2024: Appendix 9"
+date: "`r format(Sys.time(), '%A %d %B %Y')`"
+#header-includes:
+#   - \usepackage[default]{sourcesanspro}
+#   - \usepackage[T1]{fontenc}
+author: Dean Sayre, Megan Klingler, Sarah-Blythe Ballard
+output: 
+  officedown::rdocx_document:
+    number_sections: FALSE
+    mapstyles:
+      Normal: ['First Paragraph']
+# word_document:
+## officedown::rdocx_document: 
+#  page_size:
+#    width: 8.3
+#    height: 11.7
+#    orient: "portrait"
+#  page_margins:
+#    bottom: 1
+#    top: 1
+#    right: 1
+#    left: 1
+#    header: 0.5
+#    footer: 0.5
+#    gutter: 0.5
+   # extra_dependencies: ["float"]
+ #  toc: true
+ #  toc_depth: 2
+   #theme: united
+   ## latex_engine: pdflatex
+geometry: margin=1in
+#fontfamily: palatino
+mainfont: Calibri  
+#fontsize: 11pt
+bibliography: references1.bib
+
+---
+
+```{r setup, include=FALSE}
+library(officedown)
+library(officer)
+
+knitr::opts_chunk$set(echo = FALSE, 
+                      warning = FALSE, 
+                      message = FALSE, 
+                      fig.cap = FALSE)
+
+```
+
+
+```{r}
+pacman::p_load(rio, 
+               tidyverse)
+```
+
+# Appendix 9
+## Chakechake
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "facilities", "chakechake"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "facilities", "chakechake"), i)
+  cat("![](",filename,")")
+  }
+
+```
+
+## Kaskazini A
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "facilities", "kaskazini_a"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "facilities", "kaskazini_a"), i)
+  cat("![](",filename,")")
+  }
+
+```
+
+
+## Kaskazini B
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "facilities", "kaskazini_b"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "facilities", "kaskazini_b"), i)
+  cat("![](",filename,")")
+  }
+
+```
+
+## Kati
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "facilities", "kati"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "facilities", "kati"), i)
+  cat("![](",filename,")")
+  }
+
+```
+
+## Kusini
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "facilities", "kusini"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "facilities", "kusini"), i)
+  cat("![](",filename,")")
+  }
+
+```
+
+## Magharibi A
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "facilities", "magharibi_a"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "facilities", "magharibi_a"), i)
+  cat("![](",filename,")")
+  }
+
+```
+
+## Magharibi B
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "facilities", "magharibi_b"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "facilities", "magharibi_b"), i)
+  cat("![](",filename,")")
+  }
+
+```
+
+## Mjini
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "facilities", "mjini"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "facilities", "mjini"), i)
+  cat("![](",filename,")")
+  }
+
+```
+
+## Mkoani
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "facilities", "mkoani"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "facilities", "mkoani"), i)
+  cat("![](",filename,")")
+  }
+
+```
+
+## Wete
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "facilities", "wete"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "facilities", "wete"), i)
+  cat("![](",filename,")")
+  }
+
+```

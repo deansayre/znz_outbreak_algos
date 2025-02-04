@@ -1,0 +1,181 @@
+---
+title: "Review of Alerts at District- and selected Shehia-Level"
+date: "`r format(Sys.time(), '%A %d %B %Y')`"
+#header-includes:
+#   - \usepackage[default]{sourcesanspro}
+#   - \usepackage[T1]{fontenc}
+output: 
+  officedown::rdocx_document:
+    number_sections: FALSE
+
+# word_document:
+## officedown::rdocx_document: 
+#  page_size:
+#    width: 8.3
+#    height: 11.7
+#    orient: "portrait"
+#  page_margins:
+#    bottom: 1
+#    top: 1
+#    right: 1
+#    left: 1
+#    header: 0.5
+#    footer: 0.5
+#    gutter: 0.5
+   # extra_dependencies: ["float"]
+ #  toc: true
+ #  toc_depth: 2
+   #theme: united
+   ## latex_engine: pdflatex
+geometry: margin=1in
+#fontfamily: palatino
+mainfont: Calibri  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, 
+                      warning = FALSE, 
+                      message = FALSE, 
+                      fig.cap = FALSE)
+```
+
+
+![](pdf_report/alarms_district_for_review/chakechake.png)
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "alarms_shehia", "chakechake"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "alarms_shehia", "chakechake"), i)
+  cat("![](",filename,")")
+  }
+
+```
+
+\newpage 
+
+![](pdf_report/alarms_district_for_review/kaskazini_a.png)
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "alarms_shehia", "kaskazini_a"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "alarms_shehia", "kaskazini_a"), i)
+  cat("![](",filename,")")
+  }
+
+```
+
+![](pdf_report/alarms_district_for_review/kaskazini_b.png)
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "alarms_shehia", "kaskazini_b"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "alarms_shehia", "kaskazini_b"), i)
+  cat("![](",filename,")")
+  }
+
+```
+
+![](pdf_report/alarms_district_for_review/kati.png)
+
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "alarms_shehia", "kati"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "alarms_shehia", "kati"), i)
+  cat("![](",filename,")")
+  }
+
+```
+
+
+![](pdf_report/alarms_district_for_review/kusini.png)
+
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "alarms_shehia", "kusini"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "alarms_shehia", "kusini"), i)
+  cat("![](",filename,")")
+  }
+
+```
+
+
+![](pdf_report/alarms_district_for_review/magharibi_a.png)
+
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "alarms_shehia", "magharibi_a"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "alarms_shehia", "magharibi_a"), i)
+  cat("![](",filename,")")
+  }
+
+```
+![](pdf_report/alarms_district_for_review/magharibi_b.png)
+
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "alarms_shehia", "magharibi_b"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "alarms_shehia", "magharibi_b"), i)
+  cat("![](",filename,")")
+  }
+
+```
+
+![](pdf_report/alarms_district_for_review/micheweni.png)
+
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "alarms_shehia", "micheweni"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "alarms_shehia", "micheweni"), i)
+  cat("![](",filename,")")
+  }
+
+```
+
+
+![](pdf_report/alarms_district_for_review/mjini.png)
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "alarms_shehia", "mjini"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "alarms_shehia", "mjini"), i)
+  cat("![](",filename,")")
+  }
+
+```
+
+
+![](pdf_report/alarms_district_for_review/wete.png)
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "alarms_shehia", "wete"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "alarms_shehia", "wete"), i)
+  cat("![](",filename,")")
+  }
+
+```

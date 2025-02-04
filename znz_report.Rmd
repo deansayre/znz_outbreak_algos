@@ -1,0 +1,1723 @@
+---
+title: "Assessment of outbreak detection algorithms: Zanzibar, 2019--2024"
+date: "`r format(Sys.time(), '%A %d %B %Y')`"
+#header-includes:
+#   - \usepackage[default]{sourcesanspro}
+#   - \usepackage[T1]{fontenc}
+author: Dean Sayre, Megan Klingler, Sarah-Blythe Ballard
+output: 
+  officedown::rdocx_document:
+    number_sections: FALSE
+    mapstyles:
+      Normal: ['First Paragraph']
+# word_document:
+## officedown::rdocx_document: 
+#  page_size:
+#    width: 8.3
+#    height: 11.7
+#    orient: "portrait"
+#  page_margins:
+#    bottom: 1
+#    top: 1
+#    right: 1
+#    left: 1
+#    header: 0.5
+#    footer: 0.5
+#    gutter: 0.5
+   # extra_dependencies: ["float"]
+ #  toc: true
+ #  toc_depth: 2
+   #theme: united
+   ## latex_engine: pdflatex
+geometry: margin=1in
+#fontfamily: palatino
+mainfont: Calibri  
+#fontsize: 11pt
+bibliography: references1.bib
+
+---
+
+```{r setup, include=FALSE}
+library(officedown)
+library(officer)
+
+knitr::opts_chunk$set(echo = FALSE, 
+                      warning = FALSE, 
+                      message = FALSE, 
+                      fig.cap = FALSE)
+
+```
+
+
+\newpage
+
+# Summary
+
+\newpage
+
+## Table of content
+
+<!---BLOCK_TOC--->
+
+## List of figures
+
+<!---BLOCK_TOC{seq_id: 'fig'}--->
+
+## List of tables
+
+<!---BLOCK_TOC{seq_id: 'tab'}--->
+
+\newpage
+
+# Introduction
+
+Given the recent upsurge of reported malaria cases in Zanzibar, the
+upcoming revision of the malaria surveillance guidelines, and the
+integration of Zanzibar’s Malaria Case Notification (MCN) system into
+the electronic Integrated Disease Surveillance and Response (eIDSR)
+system on the DHIS2 platform, there is renewed interest to ensure that
+the routine malaria elimination surveillance system is optimizing the
+algorithm used to detect malaria epidemics at various administrative
+levels (national, island, district, shehia, etc.) to inform response
+efforts. There are several World Health Organization (WHO)-recommended
+epidemic detection algorithms [@RN119]; however, the performance of these
+algorithms has not been assessed in Zanzibar. The goal of this exercise
+is the evaluation of the performance of various WHO-recommended epidemic
+detection algorithms, and development of recommendations for integration
+of the best performing algorithm into the malaria surveillance system in
+Zanzibar.
+
+## Analytic approach
+
+**1. Independently confirm reported trends:** In partnership with the Zanzibar
+Malaria Elimination Program (ZAMEP)
+and implementing partners, raw count data were gathered from the Zanzibar’s 
+Coconut System
+and weekly eIDSR database. The data were analyzed to verify the trends
+reported by the national program. Data were cleaned to align dates,
+names of health facilities, shehias, and districts, and were also
+de-duplicated to the extent possible.
+
+**2. Assess impact of and account for potential reporting bias:** Health
+facility reporting trends were assessed for possible reporting bias
+including, but not limited to inconsistent reporting, facility closures
+or potential name changes. A subset of consistently reporting facilities
+was generated to limit the noise in routine data attributable to
+reporting inconsistencies and to be used in the subsequent step in which
+'true, actionable outbreaks' were identified. Descriptive analyses of cases 
+included in the analytic subset and those censored were performed to assess for
+the possibility of introduced bias.
+
+**3. Establishment of gold standard outbreak definition:** In
+cooperation with national officials and local implementing partners, routine 
+data from the subset of facilities identified in step 2 above were used to 
+establish a gold standard set of definition of a malaria outbreak warranting
+programmatic intervention. Using data dating to 2019, the improved Farrington 
+algorithm [@noufaily] was applied to flag anomalous epidemiological weeks in 
+each district, together with two added criteria that (1) the abnormality be part 
+of an event lasting at least two consecutive weeks when case counts exceeded the 
+threshold calculated by the Farrington algorithm and (2) at least one of these 
+weeks had a reported case count either more than 4 cases above the calculated
+threshold _OR_ was three times the calculated threshold. These criteria were 
+added with the intent of maximizing the probability that flagged anomalies 
+represented actionable events, i.e., that they did **not** immediately resolve 
+on their own without programmatic intervention and **were** significantly large 
+relative to expected case counts.
+
+After the application of mathematical methods, national officials reviewed 
+weekly case counts in each district to provide additional context and human 
+judgement. Each epidemiological week from Janurary 2022 through approximately September
+2024 was classified as experiencing an outbreak, or not ('routine') in each 
+district.
+
+Mathematical criteria were also applied at the shehia level for every week this
+duration, but mathematical designations were not altered by additional human
+judgement due to the sheer number of shehia.
+
+**4.  Comparison of gold-standard created with methods recommended by the WHO:** 
+WHO-recommended algorithms were applied to routine data (both as is in the 
+routine data prior to cleaning efforts and after) to retrospectively flag 
+anomalous epidemiological weeks at both the district and shehia levels [@RN119]. 
+Three algorithms used to set alert thresholds were assessed: (1) historical mean
+weekly case count plus 2 standard deviations, (2) 75th percentile of weekly 
+case count, and (3) the C-SUM method. See reference for additional details.
+
+Outcomes of these three algorithms were then compared to those from the 
+'gold-standard' method described in number 3 above using the following metrics:
+
+***Event metrics***
+
+* Event sensitivity - Number of true outbreaks for which the test algorithm 
+produced an alarm _at least once_ between its start and end (numerator); Number 
+of true outbreaks (denominator)
+* Probability of detecting event on its first week - Number of true outbreaks 
+for which the test algorithm produced an alarm on its first week (numerator);
+Number of true outbreaks (denominator)
+
+***Epidemiological week metrics***
+
+These measures are similar to those used in diagnostic assays. If each 
+epidemiological week is classified as one of the following
+
+True Positive - true outbreak weeks associated with an alarm
+
+True Negative - true non-outbreak weeks without alarm 
+
+False Negative - outbreak weeks without alarm and 
+
+False Positive - non-outbreak weeks with alarm, 
+
+then
+
+* Weekly sensitivity - number of true positive weeks (numerator); number of true
+positive weeks plus number of false negative weeks (denominator)
+
+* Weekly specificity - number of true negative weeks (numerator); number of true
+negative weeks plus number of false positive weeks (denominator)
+
+* Weekly positive predictive value - number of true positive weeks (numerator); 
+number of true positive weeks plus number of false positive weeks (denominator)
+
+* Weekly negative predictive value - number of true negative weeks (numerator); 
+number of true negative weeks plus number of false negative weeks (denominator)
+
+Additional information and interactive features are provided in html files 
+znz_explore, znz_outbreak, metric_calc, and metric_dashboard.
+
+
+R session and package information used to perform analyses is provided in
+_Appendix 1_.
+
+
+# Data cleaning {.tabset .tabset-fade}
+```{r}
+pacman::p_load(rio, 
+               sf, 
+               tmap, 
+               geodata, 
+               plotly,
+               shiny,
+               tsibble,      
+               slider,
+               feasts,   
+               forecast,
+               yardstick,
+               surveillance,
+               tidyverse)
+
+pacman::p_load_gh("reconhub/linelist")
+pacman::p_load_gh("reconverse/trending")
+
+data_dupe <- import("final_data_cleaned.xlsx")
+data_count <- import("final_data_cleaned_De_dups.xlsx")
+
+```
+
+## Duplications
+All available case-level data from Zanzibar dating to 2019 were obtained from 
+ZAMEP. Data initially contained `r nrow(data_dupe)` observations and 
+**`r nrow(data_count)`** observations following removal of 
+`r nrow(data_dupe) - nrow(data_count)` observations that were likely duplicates 
+based on a fuzzy-matching comparison of names, ages, location, and dates of 
+presentation. Additional duplications _may_ be present in the remaining data 
+analyzed, but could not be confidently removed with the information available.
+
+## Internal Inconsistencies
+Data were examined for quality and internal consistency. Overt 
+errors/inconsistencies were found in date, facility location, and patient 
+location fields. Tables providing additional information on the observations are
+provided in _Appendix 2_.
+
+### Dates
+```{r}
+data_raw <- data_count %>% 
+  linelist::clean_data(guess_dates = FALSE)%>% 
+  janitor::remove_constant()
+
+data <- data_raw %>% 
+  mutate(data_id = row_number(),
+         date_fix1 = ifelse(str_detect(date_and_time_of_positive_results, "_"), 
+                                      NA_character_, 
+                                      date_and_time_of_positive_results),
+         date_fix2 = str_replace_all(as.character(janitor::excel_numeric_to_date(as.numeric(date_fix1))), 
+                                     "-", "_"), 
+         date_fix3 = ifelse(str_detect(date_and_time_of_positive_results, "t"),
+                                       str_extract(date_and_time_of_positive_results,
+                                                   "^.*(?=(t))"),
+                                       NA_character_),
+         date_fix4 = ifelse(is.na(date_fix2) & is.na(date_fix3),
+                            paste0(word(as.character(date_and_time_of_positive_results),
+                                        3, sep = "_"), "_",
+                                   word(as.character(date_and_time_of_positive_results),
+                                        2, sep = "_"), "_",
+                                   word(as.character(date_and_time_of_positive_results),
+                                        1, sep = "_")),
+                            NA),
+         date_fix = ymd(case_when(!is.na(date_fix3) ~ date_fix3,
+                                  !is.na(date_fix2) ~ date_fix2,
+                                  !is.na(date_fix4) ~ date_fix4,
+                                  .default = NA)),
+         epi_week = lubridate::epiweek(date_fix), 
+         iso_week = lubridate::isoweek(date_fix)) %>% 
+  group_by(facility) %>%
+  mutate(fac_id = cur_group_id())
+
+data1 <- data %>% 
+  mutate(date_fix5 = case_when(date_and_time_of_positive_results == "202413_05_21t13_30" ~ "2024_05_21",
+                               date_and_time_of_positive_results == "22024_04_10t19_59" ~ "2024_04_10",
+                               date_and_time_of_positive_results == "22023_12_11t15_20" ~ "2023_12_11",
+                               date_and_time_of_positive_results == "20244_08_31t14_30" ~ "2024_08_31",
+                               date_and_time_of_positive_results == "62024_06_05t12_54" ~ "2024_06_05",
+                               date_and_time_of_positive_results == "62024_02_20t20_49" ~ "2024_02_20",
+                               date_and_time_of_positive_results =="2024_12_31t00_21" & data_id == 35335 & date_fix == "2024-12-31" ~ "2024_01_08",
+                               .default = NA_character_), 
+         date_fix6 = ymd(case_when(!is.na(date_fix5) ~ date_fix5,
+                               !is.na(date_fix3) ~ date_fix3,
+                               !is.na(date_fix2) ~ date_fix2,
+                               !is.na(date_fix4) ~ date_fix4,
+                                  .default = NA)),
+         epi_week = lubridate::epiweek(date_fix6), 
+         iso_week = lubridate::isoweek(date_fix6), 
+         facility = ifelse(facility == "ff", "tunguu_phcu", facility))%>% 
+  mutate(facility_district = ifelse(facility == "royal_medical_clinic", 
+                                    "magharibi_b", 
+                                    facility_district),
+         district_for_shehia = case_when(district_for_shehia == "magharibi_a" & shehia == "bopwe" ~ "wete", 
+                                         district_for_shehia == "magharibi_a" & shehia == "mpendae" ~ "mjini", 
+                                         district_for_shehia == "kaskazini_b" & shehia == "nungwi_kiungani" ~ "kaskazini_a",
+                                         district_for_shehia == "magharibi_a" & shehia == "urusi" ~ "mjini", 
+                                         .default = district_for_shehia))
+
+issues <- filter(data, is.na(epi_week))
+
+
+dates_issues <- flextable::flextable(select(issues, 
+                            malaria_case_id, 
+                            facility,
+                            date_and_time_of_positive_results)) %>% 
+  flextable::colformat_num(big.mark = "") %>% 
+  flextable::autofit()
+
+
+```
+
+The errors here appear to be obvious as they seem to be in the year. The following
+changes were made:
+
+* 202413_05_21t13_30 -> 2024_05_21
+* 22024_04_10t19_59  -> 2024_04_10
+* 22023_12_11t15_20  -> 2023_12_11
+* 20244_08_31t14_30  -> 2024_08_31
+* 62024_06_05t12_54  -> 2024_06_05
+* 62024_02_20t20_49  -> 2024_02_20
+
+Additionally, one case was listed as being reported on December 31, 2024 (in 
+the future at the time of analysis). Per Coconut data, this should be listed as 
+January 8, 2024.
+
+### Facility Location
+Three entries place Royal Medical Clinic in Mjini, though it is actually in 
+Magharibi B (333 entries) per ZAMEP. This change is made.
+
+### Patient Location
+The following changes are made to cases with inconsistent shehia and district
+data following input from ZAMEP. 
+(Format: Shehia listed, district listed -> Shehia corrected, district corrected).
+
+* Bopwe, Magharibi A -> Bopwe, Wete
+* Mpendae,	Magharibi A -> Mpendae,	Mjini
+* Nungwi Kiungani,	Kaskazini B -> Nungwi Kiungani,	Kaskazini A
+* Urusi,	Magharibi A -> Urusi,	Mjini
+
+
+Several shehias are listed as being in more than one district following
+spell changes. These appear to accurately reflect the organizational structure 
+in Zanzibar. Shehias with duplicate names/appearing in multiple shehias are 
+shown in _Appendix 2_.
+
+```{r}
+data1_a <- data1 %>% 
+  mutate(district_for_shehia = case_when(district_for_shehia == "magharibi_a" & shehia == "bopwe" ~ "wete", 
+                                         district_for_shehia == "magharibi_a" & shehia == "mpendae" ~ "mjini", 
+                                         district_for_shehia == "kaskazini_b" & shehia == "nungwi_kiungani" ~ "kaskazini_a",
+                                         district_for_shehia == "magharibi_a" & shehia == "urusi" ~ "mjini", 
+                                         .default = district_for_shehia))
+
+test <- data1_a %>% 
+  group_by(district_for_shehia, shehia) %>% 
+  summarise(entries = n(),
+            dates = list(as.Date(date_fix6))) %>% 
+    ungroup() %>% 
+  rowwise() %>% 
+  mutate(`First Report` = min(unlist(dates)), 
+         `Most Recent Report` = max(unlist(dates))) %>% 
+  ungroup() %>% 
+  select(-dates) %>% 
+  janitor::get_dupes(shehia) %>% 
+  select(-dupe_count)
+
+test1 <- test %>% 
+  mutate(across(where(is.character), ~str_to_title(str_replace_all(.x, 
+                                                                   "_", 
+                                                                   " ")))) %>% 
+  arrange(shehia, desc(entries)) %>% 
+  rename(Entries = entries, 
+         Shehia = shehia, 
+         District = district_for_shehia) %>% 
+  ungroup() 
+data1 <- data1_a
+rm(data1_a)
+shehia_tab <- flextable::flextable(test1) %>% 
+  flextable::autofit()
+```
+
+
+## Data missingness
+Data are examined for missing data in select data fields. The number of 
+entries with missing values are shown below.
+
+```{r}
+a <- list("age", 
+              "district_for_shehia", 
+              "shehia",
+              "case_classification_categories",
+              "facility_district", 
+              "facility")
+
+b <- map(a, 
+         function(.x){x = sym(.x)
+         data1 %>% 
+           filter(is.na({{x}}))
+         }
+)
+
+
+rm(c)
+  
+c <- map(b, ~nrow(.x)) %>% 
+  as_vector() %>% 
+  as_tibble() %>% 
+  add_column(Variable = c("Age", 
+              "District for Shehia", 
+              "Shehia",
+              "Case Classification Categories",
+              "Facility Disrict", 
+              "Facility"), 
+             .before = 1) %>% 
+  rename(`Observations Missing` = value) %>% 
+  flextable::flextable() %>% 
+  flextable::autofit()
+
+c
+```
+
+
+## Facility name changes
+A number of facilities in the routine data were noted to have changed names over
+the period of interest (2019--2024). They are first examined for the possibility 
+of any duplicate entries and subsequently combined.
+
+Two facilities appear in the data under different names. Cases reported 
+associated with both names are graphed to assess the possibility that individual
+cases were incorrectly reported multiple times under alternative facility names.
+This does not seem to have occurred (Figure 1). 
+
+***Figure 1.*** 
+
+![](pdf_report/fac_name_change_a.png)
+
+
+![](pdf_report/fac_name_change_b.png)
+
+The remainder of facilities with name changes appeared in the malaria routine
+data only once. Pairs of names representing name changes over time are listed 
+below, with the one appearing in the malaria routine data appearing as **bold**.
+
+```{r}
+a1_a <- rio::import(here::here("pdf_report", "facility_name_change.xlsx"))
+c2 <- rio::import(here::here("pdf_report", "facility_name_change_c2.xlsx"))
+
+
+flextable::flextable(a1_a) %>% 
+  flextable::bold(a1_a$`Old Name` %in% c2$facility, 2) %>% 
+  flextable::bold(a1_a$`New Name` %in% c2$facility, 3) %>% 
+  flextable::autofit()
+```
+
+# Descriptive analyses
+
+## National trends
+Traces of malaria case counts at the national level (i.e., Zanzibar-wide) are 
+shown below (Figure 2) with each year appearing as a different color. Notable
+anomalies are seen in 2020, 2023, and 2024. District-level graphs of cases are 
+provided in _Appendix 3_. Note that data presented in Figure 2 and in the 
+figures appearing in Appendix 3 include all observations in the de-duplicated 
+data set. 
+
+***Figure 2.***
+![](pdf_report/national_trends.png)
+
+## Decomposition of national trends
+
+A classical decomposition of the data below shows the contributions of the 
+overall trend, the seasonality, and the residuals/randomness. Note that the 
+data shown here do not include data beyond calendar year 2022 due to the known
+upsurge of cases (scale on the y-axis became too large to examine more nuanced 
+details.)
+
+***Figure 3***
+![](pdf_report/decomp.png)
+
+Note the sawtooth appearance of the seasonal component. There appears to be a
+near monthly spike of reported malaria cases which may warrant further 
+investigation as this could be reflective of inappropriate reporting practices.
+
+## Autocorrelation 
+
+Conducting the Ljung-Box test for autocorrelation of the data indicates that 
+there _is_ autocorrelation in the data (as expected), with a calculated p-value
+of <0.001.
+
+A plot of the observed correlation depicted as the height of the segments 
+between a weekly count value and the values observed in the weeks preceding it 
+(lags, shown on the x-axis) is depicted below. For example, the first line shown
+here (x = 1) depicts the relation between each observation and the observation 
+before it (lag of 1). Fifty-two lags are shown, representing a full calendar 
+year.
+
+***Figure 4***
+![](pdf_report/autocorr.png)
+
+
+
+
+# Assessment of Reporting Bias
+Each facility appearing in the routine data was examined over time to assess the
+frequency of malaria case reporting from 2019--2024. Routine data are 
+very valuable for monitoring trends, but are influenced by _several_ factors, 
+only one of which are changes in malaria burden. Care-seeking behaviors, 
+clinician performance, rapid diagnostic testing availability, and facility
+record keeping/reporting all ***directly*** impact case counts present in the
+routine data. Though many of these factors are difficult to quantify, a failure
+to acknowledge their importance makes the inherent assumption that they are 
+stable over time, an assumption that malaria control programs and partners 
+actively work to undermine with efforts to improve healthcare access, community
+knowledge, commodity availability, and surveillance systems, among others. 
+
+We sought to address these to the extent possible using the data available by 
+minimizing reporting bias by censoring malaria cases reported by facilities that
+did not appear to be present throughout the entire duration of the data set. 
+Case-based data presents a unique challenge in this endeavor, as a lack of 
+reported cases can result from several scenarios, three of which include: 
+(1) the facility may not have existed/been operational throughout the entire 
+duration of the data set; (2) the facility may have been operational and 
+providing malaria case management, but these cases were not reported to the 
+national database; and (3) the facility may have been operational and offering 
+malaria case management services, but no patients presented with malaria 
+infections. Without additional aggregate data reports and a facility actively
+reporting zero cases diagnosed during a given period, these scenarios cannot
+be distinguished from one another. (Aggregated data is not available for the 
+entire duration of interest.)
+
+Not accounting for scenarios (1) and (2) above may result in the appearance of 
+artificially elevated case counts at certain periods, for instance after the 
+establishment of new facilities or when more facilities are providing data to 
+the system. For this reason, we censored malaria cases reported from facilities
+that did not appear to be present from the entire 2019--2024 duration. Though
+this approach does sacrifice some sensitivity in the event of a very limited 
+outbreak affecting only the catchment area of one facility that usually has 
+zero malaria (subset of (3) above), it greatly reduces the noise related to 
+inconsistencies inherent in routine data. Additionally, even if the assumption
+of this approach that a real upsurge in malaria cases will be evident in data
+from at least one consistently reporting facility is inaccurate, any facility 
+normally providing no malaria case management does not require an algorithm to 
+identify an abnormality in the event several cases are diagnosed in a short 
+period of time.
+
+## Health facilities reporting by district over time
+Number of health facilities reporting at least one malaria case is plotted over
+time. Though some variation is expected, consistent trends up or down may be 
+indicative of change facility existence/reporting over time that could bias
+results. 
+
+Note that epidemiological weeks are placed in groups of fours for this analysis,
+as shown on the x-axis. The blue line shows the trend line of best fit over the
+entire duration. 
+
+***Figure 5***
+![](pdf_report/facility_numbers/a.png)
+
+![](pdf_report/facility_numbers/b.png)
+
+![](pdf_report/facility_numbers/c.png)
+
+![](pdf_report/facility_numbers/d.png)
+
+![](pdf_report/facility_numbers/e.png)
+
+![](pdf_report/facility_numbers/f.png)
+
+![](pdf_report/facility_numbers/g.png)
+
+![](pdf_report/facility_numbers/h.png)
+
+![](pdf_report/facility_numbers/i.png)
+
+![](pdf_report/facility_numbers/j.png)
+
+![](pdf_report/facility_numbers/k.png)
+
+
+Kusini, Margharibi A, and Margharibi B show the most notable increasing trends
+in the number of facilities reporting malaria cases over time. 
+
+## Individual facility reporting 
+Reporting of cases at individual facilities is analyzed to assess for abnormal
+patterns in reporting. Though this is expected to be somewhat sporadic, abrupt
+changes, such as relatively consistent reporting after a long period of 
+inactivity or the inverse, are noted. 
+
+Shown below are facility reporting patterns with _any_ cases reported (i.e., 1
+or more) shown as a black square; no cases reported (i.e., zero cases or NA - 
+no data available) appear as the absence of a black square. Individual facilities
+are shown on the y-axis with epidemiological weeks sequentially on the x-axis. 
+Background colors denote calendar years (e.g., left to right, white is 2019, 
+blue is 2020, white is 2021, etc.). Facilities are ordered on the y-axis by
+the timing of first malaria case reported.
+
+***Figure 6***
+![](pdf_report/reporting/a.png)
+
+![](pdf_report/reporting/b.png)
+
+![](pdf_report/reporting/c.png)
+
+![](pdf_report/reporting/d.png)
+
+![](pdf_report/reporting/e.png)
+
+![](pdf_report/reporting/f.png)
+
+![](pdf_report/reporting/g.png)
+
+![](pdf_report/reporting/h.png)
+
+![](pdf_report/reporting/i.png)
+
+
+
+![](pdf_report/reporting/j.png)
+
+![](pdf_report/reporting/k.png)
+
+```{r}
+
+hf_name_change <- rio::import("censored_hf_mk_hm.xlsx") %>% 
+  linelist::clean_data(guess_dates = FALSE) %>% 
+  filter(!is.na(changed_to))
+
+
+hf_filter1 <- data1 %>% 
+  left_join(select(hf_name_change, c(1:3)), by = c("facility" = "facility_name", 
+                                                   "facility_district" = "district")) %>% 
+  mutate(facility = ifelse(!is.na(changed_to), changed_to, facility)) 
+
+#  test <- filter(hf_filter1, facility == "ihsani_medical_clinic")
+
+hf_filter <- hf_filter1 %>% 
+  group_by(facility) %>% 
+  mutate(dates = list(as.Date(date_fix6))) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(`First Report` = min(unlist(dates)), 
+         `Most Recent Report` = max(unlist(dates))) %>% 
+  ungroup() %>% 
+  mutate(epi_year_first = epiyear(`First Report`), 
+         epi_year_last = epiyear(`Most Recent Report`)) %>% 
+  filter(epi_year_first <= 2020, 
+         epi_year_last >= 2022)
+
+# no duplicates introduced: test <- janitor::get_dupes(hf_filter, data_id)
+
+a <- length(unique(data1$facility))  
+a1 <- length(unique(hf_filter1$facility)) 
+b <- length(unique(hf_filter$facility))  
+
+
+hf_censored1 <- hf_filter1 %>% 
+  filter(!fac_id %in% hf_filter$fac_id) %>% 
+  group_by(facility) %>% 
+  mutate(dates = list(as.Date(date_fix6))) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(`First Report` = min(unlist(dates)), 
+         `Most Recent Report` = max(unlist(dates))) %>% 
+  ungroup() %>% 
+  mutate(epi_year_first = epiyear(`First Report`), 
+         epi_year_last = epiyear(`Most Recent Report`), 
+        # `First Report` = as.Date(ifelse(epi_year_first > 2020, `First Report`, NA)), 
+        # `Most Recent Report` = as.Date(ifelse(epi_year_last < 2022, 
+        #                               `Most Recent Report`, 
+        #                               NA))
+  ) %>% 
+  count(facility, facility_district, `First Report`, `Most Recent Report`) %>% 
+#  distinct(facility_district, facility, `First Report`, `Most Recent Report`) %>% 
+  arrange(facility_district, `First Report`, `Most Recent Report`) %>% 
+  mutate(across(where(is.character), ~str_to_title(str_replace_all(.x, 
+                                                                  "_", 
+                                                                  " "))),
+         facility = str_replace_all(facility, "Phcu", "PHCU")) %>% 
+  rename(District = facility_district, 
+         Facility = facility, 
+         `Cases Reported` = n) %>% 
+  flextable::flextable() %>% 
+  flextable::autofit()
+
+included_facilities <- hf_filter %>% 
+  group_by(facility) %>% 
+  mutate(dates = list(as.Date(date_fix6))) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(`First Report` = min(unlist(dates)), 
+         `Most Recent Report` = max(unlist(dates))) %>% 
+  count(facility, facility_district, `First Report`, `Most Recent Report`) %>% 
+  arrange(facility_district, facility, `First Report`) %>% 
+  mutate(across(c(1,2), ~str_to_title(str_replace_all(.x, "_", " "))), 
+         facility = str_replace_all(facility, "Phcu", "PHCU")) %>% 
+  rename(Facility = facility, 
+         District = facility_district, 
+         `Cases Reported` = n) %>% 
+  flextable::flextable() %>% 
+  flextable::autofit()
+
+```
+
+Based on above graphics, 'inconsistent reporters' were defined as those first 
+reporting a case in 2021 or later or last reporting a case in 2021 or earlier. 
+As the duration examined is 2019--2024, this in essence filters out cases 
+reported by facilities with at least two consecutive years without a reported 
+malaria case.
+
+Using this approach, **`r a-b`** facilities and 
+**`r nrow(data1) - nrow(hf_filter)`** cases were filtered out, leaving 
+`r nrow(hf_filter)` reported cases from `r b` facilities. 
+
+Names of facilities included in the final data set as well as those excluded 
+are listed in _Appendix 4_.
+
+## Results of filtering out inconsistent reporters
+
+### Number of health facilities included/censored from trend analyses.
+
+The top panel of Figure 7 shows the absolute numbers of facilities retained 
+(blue) and those censored (grey) by district over the duration of the time frame 
+of interest. These are converted to relative retention/loss in the bottom panel.
+The most heavily censored districts are Kusini, Magharibi A, Magharibi B, and 
+Mjini.
+
+***Figure 7***
+![](pdf_report/fac_loss.png)
+
+### Health facilities reporting over time by district in complete and ing subset data sets.
+Figure 8 below shows the number of facilities reporting at least one malaria
+case in each district by year in the (A) complete de-duplicated data and (B) 
+data subset restricted to more consistently reporting health facilities. 
+Fill color of bars represents the year (2019 being the lightest; 2024 being the 
+darkest). 
+
+***Figure 8***
+![](pdf_report/fac_year.png)
+
+As expected, the number of facilities reporting at least one case in the data 
+subset appears relatively flat for all years with the most notable changes in 
+Magharibi A and Magharibi B.
+
+### Location of retained/censored cases.
+Retained and censored cases are mapped to examine the potential for an 
+imbalanced exclusion of cases by location. 
+
+***Figure 9***
+
+#### 2019
+
+![](pdf_report/censor_maps/2019.png)
+
+#### 2020
+![](pdf_report/censor_maps/2020.png)
+
+#### 2021
+![](pdf_report/censor_maps/2021.png)
+
+#### 2022
+![](pdf_report/censor_maps/2022.png)
+
+#### 2023
+![](pdf_report/censor_maps/2023.png)
+
+#### 2024
+![](pdf_report/censor_maps/2024.png)
+
+
+### Proportion of cases reported by shehia
+The following chart depicts the proportion of reported cases that were included
+in the analysis (blue) versus censored (grey). The znz_explore.html file contains
+more information including an interactive chart permitting the user to explore
+the results in greater depth. All shehias with less than 75% of reported cases
+contributing to the gold standard determination of historical outbreaks are listed
+in the table below.
+
+***Figure 10***
+![](pdf_report/shehia_prop_censored.png)
+
+
+```{r}
+rio::import("most_censored_shehia.xlsx") %>% 
+  flextable::flextable() %>% 
+
+  flextable::autofit()
+
+```
+
+## National trends in data subset
+
+Figure 2 is recreated with the data subset created to examine for any overt 
+changes in the overall pattern that may have been introduced.
+
+***Figure 11***
+![](pdf_report/national_trend_subset.png)
+
+Reviewing the national data year by year allows the overlay of cases kept in the
+subset data and those censored to gauge the potential impact censoring may have
+had on the overall patterns observed. 
+
+***Figure 12***
+
+### 2019
+
+![](pdf_report/all_subset_comp/2019.png)
+
+### 2020
+
+![](pdf_report/all_subset_comp/2020.png)
+
+### 2021
+
+![](pdf_report/all_subset_comp/2021.png)
+
+### 2022
+
+![](pdf_report/all_subset_comp/2022.png)
+
+### 2023
+
+![](pdf_report/all_subset_comp/2023.png)
+
+### 2024
+
+![](pdf_report/all_subset_comp/2024.png)
+
+As expected, the largest losses are seen during 2023 and 2024, particularly 
+during periods of noted upsurges. However, none of the overall patterns appears 
+to have changed as a result of censoring some of the data. 
+
+## Time series decomposition of data subset
+
+Figure 3 is recreated using the subsetted data from only consistently 
+reporting health facilities to assess any notable changes of patterns existing
+in the full routine data set. 
+
+***Figure 13***
+
+![](pdf_report/decomp_subset.png)
+
+# Identification of Alarms at District Level
+Using the consistent reporter data subset, weekly alarm thresholds were 
+calculated for each district for 2022, 2023, and 2024 using the Improved/Flexible 
+Farrington algorithm.  Briefly, the algorithm uses data in the time series to 
+compute a predictive distribution in the event of no outbreak for each time 
+point using a Poisson generalized linear model with over-dispersion. An alarm is
+produced if the observed case count for any time point exceeds the specified
+quantile of this predictive distribution. 
+
+Note that the thresholds were calculated using all available data, and as data 
+were only available to 2019, these thresholds were based on baselines of 
+differing durations (i.e., three, four, and five years). Other notable model 
+inputs include:
+
+* Levels in seasonality variable: 10
+* Window half-size for seasonality: 2, 3 (thin and light blue)
+* Threshold for reweighting past outbreaks using the Anscombe residuals: 2.58
+* Past weeks not included: 26
+* Alpha defining upper threshold of distribution defining abnormal: 0.1 (thick 
+and light blue, used for bar coloration); 0.01 (thin and dark blue)
+
+
+Plots below show the number of reported malaria cases in each district by 
+epidemiological week. The dashed blue lines are outbreak thresholds
+calculated using the Improved Farrington algorithm at different thresholds (light 
+blue: alpha = 0.1, darker blue: alpha = 0.01, lower alpha is less sensitive, 
+more specific), bar fill color indicates those in 'outbeak' (red) versus within 
+expected limits (grey). 'Outbreak' was determined by weekly case counts 
+exceeding the calculated (light blue) threshold for _at least_ two consecutive
+weeks, _at least_ one of which exceeding the threshold by 4 cases or 300%.
+
+There are two plots for each district. In the first, the lower panels depict 
+categorization of weekly case counts reported at 
+individual shehias within the district. <span style="color: #BEBEBE;">Grey</span>
+indicates weeks with reported malaria cases that did not surpass the calculated 
+threshold; <span style="color: #61A2A4;">blue</span> indicates an 
+epidemiological week when the cases reported by a shehia exceeded its epidemic 
+threshold (at alpha = 0.1) without fulfilling ancillary requirements (i.e., 
+absolute/relative magnitude and at least two consecutive weeks of 
+higher-than-threshold reported cases); <span style="color: #8A2BE2;">purple</span>
+represents an epidemiological week that was at least 4 cases above or 3x the 
+calculated threshold; <span style="color: #8B1A1A;">red</span> indicates that 
+cases reported in the shehia were both at least 4 cases above or 3x the 
+calculated threshold **AND** part of a string of at least two consecutive weeks 
+when counts reported by the shehia exceeded the calculated threshold. Note that
+a number of weeks across several districts were flagged by the algorithm as 
+described above, but were suppressed by ZAMEP (i.e., manually changed from 
+'alarm' to 'routine') based on the context and ability of the program to 
+respond. These are colored <span style="color: #2E2E2E;">dark grey</span>. 
+
+For the second plot for each district, the bottom panel depicts cases reported 
+by each health facility in the district as a raster. Note that the color scale
+differs for each graph. Facilities are loosely grouped by shehia (though 
+imperfectly as group identities were created by the most common shehias of 
+patients diagnosed with malaria at these facilities).
+
+These plots show outcomes when all cases in the subset created above are 
+included (i.e., both local and imported). Similar plots showing results when 
+cases classified as 'imported' or 'introduced' are excluded are shown in 
+_Appendix 6_. For reference, the distribution of case classifications in the 
+full de-duplicated data are listed below.
+
+* Imported - 19806
+* In progress - 3899
+* Indigenous - 37515
+* Induced - 196
+* Introduced - 666
+* Lost to followup - 2015
+* Relapse - 54
+* Relapsing - 20
+* Unclassified - 1073
+
+<!---BLOCK_LANDSCAPE_START--->
+
+***Figure 14***
+
+![](pdf_report/alarms_district/chakechake.png)
+
+![](pdf_report/facility_district_alarms/chakechake.png)
+
+![](pdf_report/alarms_district/kaskazini_a.png)
+
+![](pdf_report/facility_district_alarms/kaskazini_a.png)
+
+![](pdf_report/alarms_district/kaskazini_b.png)
+
+![](pdf_report/facility_district_alarms/kaskazini_b.png)
+
+![](pdf_report/alarms_district/kati.png)
+
+![](pdf_report/facility_district_alarms/kati.png)
+
+![](pdf_report/alarms_district/kusini.png)
+
+![](pdf_report/facility_district_alarms/kusini.png)
+
+![](pdf_report/alarms_district/magharibi_a.png)
+
+![](pdf_report/facility_district_alarms/magharibi_a.png)
+
+
+![](pdf_report/alarms_district/magharibi_b.png)
+
+![](pdf_report/facility_district_alarms/magharibi_b.png)
+
+
+![](pdf_report/alarms_district/micheweni.png)
+
+![](pdf_report/facility_district_alarms/micheweni.png)
+
+
+![](pdf_report/alarms_district/mjini.png)
+
+![](pdf_report/facility_district_alarms/mjini.png)
+
+![](pdf_report/alarms_district/wete.png)
+
+![](pdf_report/facility_district_alarms/wete.png)
+
+
+<!---BLOCK_LANDSCAPE_STOP--->
+
+
+
+# Performance of WHO-recommended algorithms compared to anomolies flagged above
+
+## District metrics
+A summary of the number of anomalous events and flagged epidemiological weeks
+per each of the three WHO-recommended algorithms is provided below. Note that
+_four_ different data sets were used for each of the algorithms, the unmodified
+routine data, the de-duplicated subset of data from only consistently reporting 
+health facilities created as part of these exercise, the unmodified
+routine data consisting of locally acquired cases only, and the de-duplicated 
+subset of data from only consistently reporting health facilities consisting of
+locally acquired cases only. 
+
+To allow ease of comparison and assess the impact of different aspects of data
+cleaning, all are presented in the same tables, and are distinguishable by 
+differences in font. The key for all tables is provided below. 
+
+```{r}
+key <- tribble(
+  ~`Case classification`,  ~`Data for WHO algorithm`,                   ~`Data for Farrington algorithm`,
+  "All cases",              "Unmodified routine",                       "De-duplicated, consistently reporting HF",
+  "Local only",             "Unmodified routine",                       "De-duplicated, consistently reporting HF",
+  "All cases",              "De-duplicated, consistently reporting HF", "De-duplicated, consistently reporting HF", 
+  "Local only",             "De-duplicated, consistently reporting HF", "De-duplicated, consistently reporting HF", 
+)
+
+
+
+flextable::flextable(key) %>% 
+flextable::bold(i = 1, part = "body") %>% 
+flextable::bg(i = 2, part = "body", bg = "#AEAEDA") %>% 
+flextable::color(i = 2,color = "white",part = "body") %>% 
+flextable::bg(i = 3, part = "body", bg = "#D8D8D8") %>% 
+flextable::bg(i = 4, part = "body", bg = "#DBDBFF") %>% 
+flextable::color(i = 4,color = "white",part = "body") %>% 
+  flextable::autofit()
+```
+
+The following tables and figures use unchanged alerts resulting from the 
+Farrington algorithm; those with changes provided by ZAMEP are used in the next 
+section.
+
+### Historical mean + 2 standard deviations
+
+Overall district-level performance for use of the historical mean + 2 standard 
+deviation threshold is summarized in the table below. Key metrics illustrating 
+performance of the algorithm with different data inputs are shown in 
+**Figure 15**. Details on the weeks flagged by the WHO algorithm in each 
+district compared to the gold standard defined above are shown in **Figure 16**.
+
+
+```{r}
+metric_tab <- rio::import(here::here("pdf_report","district_metrics_all.xlsx")) %>% 
+  mutate(across(c(Sensitivity, Specificity, PPV, NPV),
+                ~str_replace_all(.x, " \\(", "\n\\("))) %>% 
+  split(.$algo) %>% 
+  map(.,~.x %>% 
+        select(-c(algo, who_data)) %>% 
+        rename(District = district, 
+               Detected = `Probability ever detected`, 
+               "Detected\nWeek 1" = `Probability detected first week`) %>% 
+        flextable::flextable() %>% 
+        flextable::merge_v(j = "District") %>% 
+        flextable::hline(i = c(seq(4,44, 4)),
+                         part = "body") %>% 
+        flextable::bold(i = c(seq(1,43, 4)),
+                         part = "body") %>% 
+        flextable::bg(i = c(seq(2, 43, 4)), part = "body", bg = "#AEAEDA") %>% 
+        flextable::color(i = c(seq(2, 43, 4)),color = "white",part = "body") %>% 
+        flextable::bg(i = c(seq(3, 43, 4)), part = "body", bg = "#D8D8D8") %>% 
+        flextable::bg(i = c(seq(4,44, 4)), part = "body", bg = "#DBDBFF") %>% 
+        flextable::color(i = c(seq(4,44, 4)),color = "white",part = "body") %>%
+        flextable::add_header_row(values = c("", "Event", "Epiweek"), 
+                                  colwidths = c(1, 2, 4)) %>% 
+        flextable::vline(j = 3,
+                         part = "all") %>% 
+        flextable::autofit()
+      )
+
+metric_tab[[1]]
+```
+
+
+
+***Figure 15***
+
+Slope graphs depict changes in select metrics (y-axis) due to changes in the 
+data input into the algorithm being evaluated (x-axis). Line colors indicate 
+districts where data were observed. 
+
+
+*<span style="color: #D7583A">Magharibi A</span>
+
+*<span style="color: #CA8B7C">Magharibi B</span>
+
+*<span style="color: #BEBEBE">Mjini</span>
+
+*<span style="color: #646299">Chakechake</span>
+
+*<span style="color: #756B86">Micheweni</span>
+
+*<span style="color: #877574">Mkoani</span>
+
+*<span style="color: #997F62">Wete</span>
+
+*<span style="color: #73A5A8">Kaskazini A</span>
+
+*<span style="color: #83A696">Kaskazini B</span>
+
+*<span style="color: #94A784">Kati</span>
+
+*<span style="color: #A5A873">Kusini</span>
+
+
+
+![](pdf_report/district_performance/who_2sd.png)
+
+***Figure 16***
+Reported weekly case counts are depicted by the bar graphs, with the fill of the 
+bar indicating if the WHO algorithm flagged that week as an anomaly (red) or as 
+routine (grey). Background shading indicates if the gold standard method flagged
+the week as an anomaly (red) or not (white). Data input into the WHO algorithm
+were as follows: *A*: Complete, all cases; *B*: subset data, all cases; *C*:
+complete, local cases; *D* subset data, local cases.
+
+#### Chakechake
+
+![](pdf_report/algo_district_performance/chakechake/alert_2sd.png)
+
+#### Kaskazini A
+
+![](pdf_report/algo_district_performance/kaskazini_a/alert_2sd.png)
+
+#### Kaskazini B
+
+![](pdf_report/algo_district_performance/kaskazini_b/alert_2sd.png)
+
+#### Kati
+
+![](pdf_report/algo_district_performance/kati/alert_2sd.png)
+
+#### Kusini
+
+![](pdf_report/algo_district_performance/kusini/alert_2sd.png)
+
+#### Magharibi A
+
+![](pdf_report/algo_district_performance/magharibi_a/alert_2sd.png)
+
+#### Magharibi B
+
+![](pdf_report/algo_district_performance/magharibi_b/alert_2sd.png)
+
+#### Micheweni
+
+![](pdf_report/algo_district_performance/micheweni/alert_2sd.png)
+
+#### Mjini
+
+![](pdf_report/algo_district_performance/mjini/alert_2sd.png)
+
+#### Mkoani
+
+![](pdf_report/algo_district_performance/mkoani/alert_2sd.png)
+
+#### Wete
+
+![](pdf_report/algo_district_performance/wete/alert_2sd.png)
+
+### 75th percentile
+
+Overall district-level performance for use of the weekly 75th percentile 
+threshold is summarized in the table below. Key metrics illustrating 
+performance of the algorithm with different data inputs are shown in 
+**Figure 17**. Details on the weeks flagged by the WHO algorithm in each 
+district compared to the gold standard defined above are shown in **Figure 18**.
+See captions for Figures 15 and 16 for explanation/legends of plots.
+
+
+```{r}
+metric_tab[[4]]
+```
+
+***Figure 17***
+
+![](pdf_report/district_performance/who_75.png)
+
+***Figure 18***
+
+#### Chakechake
+
+![](pdf_report/algo_district_performance/chakechake/alert_75.png)
+
+#### Kaskazini A
+
+![](pdf_report/algo_district_performance/kaskazini_a/alert_75.png)
+
+#### Kaskazini B
+
+![](pdf_report/algo_district_performance/kaskazini_b/alert_75.png)
+
+#### Kati
+
+![](pdf_report/algo_district_performance/kati/alert_75.png)
+
+#### Kusini
+
+![](pdf_report/algo_district_performance/kusini/alert_75.png)
+
+#### Magharibi A
+
+![](pdf_report/algo_district_performance/magharibi_a/alert_75.png)
+
+#### Magharibi B
+
+![](pdf_report/algo_district_performance/magharibi_b/alert_75.png)
+
+#### Micheweni
+
+![](pdf_report/algo_district_performance/micheweni/alert_75.png)
+
+#### Mjini
+
+![](pdf_report/algo_district_performance/mjini/alert_75.png)
+
+#### Mkoani
+
+![](pdf_report/algo_district_performance/mkoani/alert_75.png)
+
+#### Wete
+
+![](pdf_report/algo_district_performance/wete/alert_75.png)
+
+### C-SUM
+Overall district-level performance for use of the weekly 75th percentile 
+threshold is summarized in the table below. Key metrics illustrating 
+performance of the algorithm with different data inputs are shown in 
+**Figure 19**. Details on the weeks flagged by the WHO algorithm in each 
+district compared to the gold standard defined above are shown in **Figure 20**.
+See captions for Figures 15 and 16 for explanation/legends of plots.
+
+```{r}
+metric_tab[[5]]
+```
+
+***Figure 19***
+
+![](pdf_report/district_performance/who_csum.png)
+
+***Figure 20***
+
+#### Chakechake
+
+![](pdf_report/algo_district_performance/chakechake/alert_csum.png)
+
+#### Kaskazini A
+
+![](pdf_report/algo_district_performance/kaskazini_a/alert_csum.png)
+
+#### Kaskazini B
+
+![](pdf_report/algo_district_performance/kaskazini_b/alert_csum.png)
+
+#### Kati
+
+![](pdf_report/algo_district_performance/kati/alert_csum.png)
+
+#### Kusini
+
+![](pdf_report/algo_district_performance/kusini/alert_csum.png)
+
+#### Magharibi A
+
+![](pdf_report/algo_district_performance/magharibi_a/alert_csum.png)
+
+#### Magharibi B
+
+![](pdf_report/algo_district_performance/magharibi_b/alert_csum.png)
+
+#### Micheweni
+
+![](pdf_report/algo_district_performance/micheweni/alert_csum.png)
+
+#### Mjini
+
+![](pdf_report/algo_district_performance/mjini/alert_csum.png)
+
+#### Mkoani
+
+![](pdf_report/algo_district_performance/mkoani/alert_csum.png)
+
+#### Wete
+
+![](pdf_report/algo_district_performance/wete/alert_csum.png)
+
+## Quantitative comparison of WHO algorithm thresholds against those Farrington Algorithm
+The following figures compare the weekly outbreak thresholds of the three WHO
+algorithms to those computed by the Farrington Algorithm used to define the gold
+standard. Farrington thresholds have been adjusted to appear as y = 0 on the 
+x-axis with the absolute difference of other thresholds plotted as line graphs. 
+Weekly case counts appear as faded grey bars (negative bars indicate a week when
+the Farrington threshold was not surpassed, thus a non-outbreak week; positive
+bars indicate a week when the Farrington outbreak was surpassed, thus a week with
+an upsurge).
+
+Histograms of absolute difference for each method appear in the right margin.
+
+
+### Chakechake
+
+![](pdf_report/threshold_comp/all_cases/chakechake.png) 
+
+### Kaskazini A
+
+![](pdf_report/threshold_comp/all_cases/kaskazini_a.png) 
+
+### Kaskazini B
+
+![](pdf_report/threshold_comp/all_cases/kaskazini_b.png) 
+
+
+### Kati
+
+![](pdf_report/threshold_comp/all_cases/kati.png) 
+
+### Kusini
+
+![](pdf_report/threshold_comp/all_cases/kusini.png) 
+
+### Magharibi A
+
+![](pdf_report/threshold_comp/all_cases/magharibi_a.png) 
+
+
+### Magharibi B
+
+![](pdf_report/threshold_comp/all_cases/magharibi_b.png) 
+
+### Micheweni
+
+![](pdf_report/threshold_comp/all_cases/micheweni.png) 
+
+### Mjini
+
+![](pdf_report/threshold_comp/all_cases/mjini.png) 
+
+### Mkoani
+
+![](pdf_report/threshold_comp/all_cases/mkoani.png) 
+
+
+### Wete
+
+![](pdf_report/threshold_comp/all_cases/wete.png) 
+
+
+## District metrics with ZAMEP changes to gold standard.
+Not that these are only available for the first two input data sets, as this
+exercise was not performed for the local cases only data.
+
+### Historical mean + 2 standard deviations
+```{r}
+metric_tab_zamep <- rio::import("pdf_report/district_metrics_zamep_all.xlsx") %>% 
+  mutate(across(c(Sensitivity, Specificity, PPV, NPV),
+                ~str_replace_all(.x, " \\(", "\n\\("))) %>% 
+  split(.$algo) %>% 
+  map(.,~.x %>% 
+        select(-c(algo, who_data)) %>% 
+        rename(District = district, 
+               Detected = `Probability ever detected`, 
+               "Detected\nWeek 1" = `Probability detected first week`) %>% 
+        flextable::flextable() %>% 
+        flextable::merge_v(j = "District") %>% 
+        flextable::hline(i = c(seq(2,22, 2)),
+                         part = "body") %>% 
+        flextable::bold(i = c(seq(1,21, 2)),
+                         part = "body") %>% 
+        flextable::bg(i = c(seq(2, 21, 2)), part = "body", bg = "#AEAEDA") %>% 
+        flextable::color(i = c(seq(2, 21, 2)),color = "white",part = "body") %>% 
+        flextable::add_header_row(values = c("", "Event", "Epiweek"), 
+                                  colwidths = c(1, 2, 4)) %>% 
+        flextable::vline(j = 3,
+                         part = "all") %>% 
+        flextable::autofit()
+      )
+
+metric_tab_zamep[[1]]
+
+
+```
+
+### 75th percentile
+```{r}
+metric_tab_zamep[[4]]
+
+```
+
+### C-SUM percentile
+```{r}
+metric_tab_zamep[[5]]
+
+```
+
+
+## Shehia Metrics
+See Appendix 7 for table of shehia-level performance of algorithms. In
+addition to the WHO algorithms presented above, a constant threshold
+requested by ZAMEP is applyed to each shehia. An alarm was signaled when the
+shehia reported cases equal to or exceeding the threshold listed for at 
+least two consecutive weeks. Thresholds by shehia are listed in Appendix 8.
+See the file labeled metric_dashboard.html for an interactive dashboard to 
+filter to specific scenarios/levels of performance of interest. 
+
+Results here are instead presented as histograms and cumulative distribution 
+functions to illustrate how algorithms performed at the shehia-level as a 
+population.
+
+Similar to the assessment of algorithm performance at the district level, 
+multiple comparisons were made using the four data sets as inputs for the 
+WHO algorithms (raw versus consistently reporting, all cases versus local only).
+
+### Historical mean + 2 standard deviations
+
+***Figure 21***
+
+#### Input: All data
+![](pdf_report/shehia_histograms/raw_who_2sd.png)
+
+#### Input: Subset data
+![](pdf_report/shehia_histograms/filtered_who_2sd.png)
+
+#### Input: All data, local only
+![](pdf_report/shehia_histograms/raw_local_who_2sd.png)
+
+#### Input: Subset data, local only
+![](pdf_report/shehia_histograms/filtered_local_who_2sd.png)
+
+### 75th percentile
+
+***Figure 22***
+
+#### Input: All data
+
+![](pdf_report/shehia_histograms/raw_who_75.png)
+
+#### Input: Subset data
+
+![](pdf_report/shehia_histograms/filtered_who_75.png)
+
+#### Input: All data, local only
+![](pdf_report/shehia_histograms/raw_local_who_75.png)
+
+
+#### Input: Subset data, local only
+
+![](pdf_report/shehia_histograms/filtered_local_who_75.png)
+
+### C-SUM
+
+***Figure 23***
+
+#### Input: All data
+![](pdf_report/shehia_histograms/raw_who_csum.png)
+
+#### Input: Subset data
+![](pdf_report/shehia_histograms/filtered_who_csum.png)
+
+#### Input: All data, local only
+![](pdf_report/shehia_histograms/raw_local_who_csum.png)
+
+#### Input: Subset data, local only
+![](pdf_report/shehia_histograms/filtered_local_who_csum.png)
+
+### Constant shehia-specific thresholds
+
+***Figure 24***
+
+#### Input: All data
+
+![](pdf_report/shehia_histograms/raw_who_zamep.png)
+
+#### Input: Subset data
+
+![](pdf_report/shehia_histograms/filtered_who_zamep.png)
+
+#### Input: All data, local only
+![](pdf_report/shehia_histograms/raw_local_who_zamep.png)
+
+
+#### Input: Subset data, local only
+
+![](pdf_report/shehia_histograms/filtered_local_who_zamep.png)
+
+
+### Comparison of Algorithms - Shehia Level
+
+#### Overlaid Density Curves
+
+Histograms are converted to density plots to allow easier review of the 
+performance of all WHO algorithms at once, including their performance using
+different inputs. 
+
+The legend for all density curves is provided below. Note that each plot has 16
+tracings.
+
+![](pdf_report/density_legend.png)
+
+<!---BLOCK_LANDSCAPE_START--->
+
+***Figure 24***
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "shehia_density"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "shehia_density"), i)
+  cat("![](",filename,")")
+  }
+
+```
+
+#### Cumulative Density Curves
+
+***Figure 25***
+
+```{r, results = 'asis'}
+
+plots <- list.files(here::here("pdf_report", "shehia_cdf"))
+
+for(i in plots){
+  filename <- file.path(here::here("pdf_report", "shehia_cdf"), i)
+  cat("![](",filename,")")
+  }
+
+```
+
+<!---BLOCK_LANDSCAPE_STOP--->
+
+
+
+
+
+
+# Appendix 1: Session information
+```{r}
+
+sessionInfo()
+
+```
+
+# Appendix 2: Changes in data cleaning 
+## Date issues
+```{r}
+dates_issues
+```
+
+## "Duplicate" shehias
+```{r}
+shehia_tab
+```
+
+# Appendix 3: District-level malaria case trends
+
+<!---BLOCK_LANDSCAPE_START--->
+
+![Chakechake](C:/Users/omp2/OneDrive - CDC/zanzibar/znz_data/pdf_report/appendix3/a.png)
+
+![Kaskazini A](C:/Users/omp2/OneDrive - CDC/zanzibar/znz_data/pdf_report/appendix3/b.png)
+
+![Kaskazini B](C:/Users/omp2/OneDrive - CDC/zanzibar/znz_data/pdf_report/appendix3/c.png)
+
+![Kati](C:/Users/omp2/OneDrive - CDC/zanzibar/znz_data/pdf_report/appendix3/d.png)
+
+![Kusini](C:/Users/omp2/OneDrive - CDC/zanzibar/znz_data/pdf_report/appendix3/e.png)
+
+![Magharibi A](C:/Users/omp2/OneDrive - CDC/zanzibar/znz_data/pdf_report/appendix3/f.png)
+
+![Magharibi B](C:/Users/omp2/OneDrive - CDC/zanzibar/znz_data/pdf_report/appendix3/g.png)
+
+![Micheweni](C:/Users/omp2/OneDrive - CDC/zanzibar/znz_data/pdf_report/appendix3/h.png)
+
+![Mjini](C:/Users/omp2/OneDrive - CDC/zanzibar/znz_data/pdf_report/appendix3/i.png)
+
+![Mkoani](C:/Users/omp2/OneDrive - CDC/zanzibar/znz_data/pdf_report/appendix3/j.png)
+
+![Wete](C:/Users/omp2/OneDrive - CDC/zanzibar/znz_data/pdf_report/appendix3/k.png)
+
+<!---BLOCK_LANDSCAPE_STOP--->
+
+# Appendix 4: Facility inclusion and censorship
+## Facilities censored determination of true outbreak
+Note, these are included in the data fed into the WHO algorithms as their 
+inclusion, while potentially adding noise to the trend when comparing data over
+time, represents a more realistic use of the routine data and how these 
+algorithms will behave.
+
+```{r}
+hf_censored1
+```
+
+## Facilities included determination of true outbreak
+```{r}
+included_facilities
+```
+
+<!---BLOCK_LANDSCAPE_START--->
+
+
+# Appendix 5. Retained and excluded weekly cases by district
+
+
+![Appendix 5A.](pdf_report/district_comp/chakechake.png)
+
+![Appendix 5B.](pdf_report/district_comp/kaskazini_a.png)
+
+![Appendix 5C.](pdf_report/district_comp/kaskazini_b.png)
+
+![Appendix 5D.](pdf_report/district_comp/kati.png)
+
+![Appendix 5E.](pdf_report/district_comp/kusini.png)
+
+![Appendix 5F.](pdf_report/district_comp/magharibi_a.png)
+
+![Appendix 5G.](pdf_report/district_comp/magharibi_b.png)
+
+![Appendix 5H.](pdf_report/district_comp/micheweni.png)
+
+![Appendix 5I.](pdf_report/district_comp/mjini.png)
+
+![Appendix 5J.](pdf_report/district_comp/mkoani.png)
+
+![Appendix 5K.](pdf_report/district_comp/wete.png)
+
+
+# Appendix 6. True outbreaks defined after exclusion of imported cases
+
+![](pdf_report/alarms_district/local/chakechake.png)
+
+
+![](pdf_report/alarms_district/local/kaskazini_a.png)
+
+![](pdf_report/alarms_district/local/kaskazini_b.png)
+
+![](pdf_report/alarms_district/local/kati.png)
+
+![](pdf_report/alarms_district/local/kusini.png)
+
+![](pdf_report/alarms_district/local/magharibi_a.png)
+
+![](pdf_report/alarms_district/local/magharibi_b.png)
+
+![](pdf_report/alarms_district/local/micheweni.png)
+
+
+![](pdf_report/alarms_district/local/mjini.png)
+
+![](pdf_report/alarms_district/local/wete.png)
+
+<!---BLOCK_LANDSCAPE_STOP--->
+
+
+# Appendix 7. Shehia-level performance tables.
+
+The key is identical as previous tables.
+```{r}
+
+key <- tribble(
+  ~`Case classification`,  ~`Data for WHO algorithm`,                   ~`Data for Farrington algorithm`,
+  "All cases",              "Unmodified routine",                       "De-duplicated, consistently reporting HF",
+  "Local only",             "Unmodified routine",                       "De-duplicated, consistently reporting HF",
+  "All cases",              "De-duplicated, consistently reporting HF", "De-duplicated, consistently reporting HF", 
+  "Local only",             "De-duplicated, consistently reporting HF", "De-duplicated, consistently reporting HF", 
+)
+
+
+
+flextable::flextable(key) %>% 
+flextable::bold(i = 1, part = "body") %>% 
+flextable::bg(i = 2, part = "body", bg = "#AEAEDA") %>% 
+flextable::color(i = 2,color = "white",part = "body") %>% 
+flextable::bg(i = 3, part = "body", bg = "#D8D8D8") %>% 
+flextable::bg(i = 4, part = "body", bg = "#DBDBFF") %>% 
+flextable::color(i = 4,color = "white",part = "body") %>% 
+  flextable::autofit()
+```
+
+
+## Historical mean + 2SD
+```{r}
+metric_tab_she <- rio::import(here::here("pdf_report","shehia_metrics_all.xlsx")) %>% 
+  mutate(across(c(Sensitivity, Specificity, PPV, NPV),
+                ~str_replace_all(.x, " \\(", "\n\\("))) %>% 
+  split(.$algo) %>% 
+  map(.,~.x %>% 
+        select(-c(algo, input_data)) %>% 
+        rename(District = district,
+               Shehia = shehia,
+               Detected = `Probability ever detected`, 
+               "Detected\nWeek 1" = `Probability detected first week`) %>% 
+        flextable::flextable() %>% 
+        flextable::merge_v(j = "District") %>% 
+        flextable::merge_v(j = "Shehia") %>% 
+        flextable::hline(i = c(seq(4,1528, 4)),
+                         part = "body") %>% 
+        flextable::bold(i = c(seq(1,1527, 4)),
+                         part = "body") %>% 
+        flextable::bg(i = c(seq(2, 1527, 4)), part = "body", bg = "#AEAEDA") %>% 
+        flextable::color(i = c(seq(2, 1527, 4)),color = "white",part = "body") %>% 
+        flextable::bg(i = c(seq(3, 1527, 4)), part = "body", bg = "#D8D8D8") %>% 
+        flextable::bg(i = c(seq(4,1528, 4)), part = "body", bg = "#DBDBFF") %>% 
+        flextable::color(i = c(seq(4,1528, 4)),color = "white",part = "body") %>%
+        flextable::add_header_row(values = c("", "Event", "Epiweek"), 
+                                  colwidths = c(2, 2, 4)) %>% 
+        flextable::vline(j = 4,
+                         part = "all") %>% 
+        flextable::autofit()
+      )
+
+metric_tab_she[[1]]
+```
+
+## 75th percentile
+
+```{r}
+metric_tab_she[[2]]
+
+```
+
+
+## C-SUM 
+
+```{r}
+metric_tab_she[[3]]
+
+```
+
+## Constant
+
+```{r}
+metric_tab_she[[4]]
+
+```
+
+# Appendix 8. Shehia-specific thresholds used in constant algorithm
+
+Must have been matched or surpassed at two consecutive weeks or more to 
+raise alarm.
+```{r}
+rio::import("shehia_threshold_all.xlsx") %>% 
+  rename(district = district_n, 
+         shehia = shehia_nam) %>% 
+  select(-c(id, dis_she_combo)) %>% 
+  mutate(across(c(1,2), ~str_to_title(str_replace_all(.x, "_", " ")))) %>% 
+  rename_with(.cols = everything(), ~str_to_title(.x)) %>% 
+  flextable::flextable()
+```
+
+
+
+# Appendix 9. Reported cases from consistently reporting facilities
+See separate document. Output is too long for inclusion here. 
+
+
+<!---BLOCK_LANDSCAPE_STOP--->
+
+
+# References

@@ -1,0 +1,2953 @@
+---
+title: "Assessment of malaria outbreaks algorithms in Zanzibar using routine data"
+date: "`r format(Sys.time(), '%A %d %B %Y')`"
+#runtime: shiny
+output:
+  html_document:
+    code_folding: hide
+    code_download: true
+    highlight: zenburn
+    number_sections: yes
+    theme: spacelab
+    toc: yes
+    toc_collapse: no
+    toc_depth: 3
+    toc_float: yes
+    css: C:/Users/omp2/OneDrive - CDC/zanzibar/znz_data/style.css
+    includes:
+      in_header: header.html
+---
+
+<div class="watermark">PRELIMINARY</div>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, 
+                      message = FALSE, 
+                      fig.dim = c(10, 8))
+```
+
+
+# Set up {.tabset .tabset-fade}
+## Package attachment
+Session information is provided below, including attached packages.
+```{r}
+rm(list = ls())
+
+pacman::p_load(rio, 
+             #  running,
+               tsibble,
+               plotly,
+               tidyverse)
+
+pacman::p_load_gh("reconhub/linelist")
+
+sessionInfo()
+
+```
+
+## Data importation
+Data cleaned and filtered in znz_explore.Rmd and farrington_thresholds.R are 
+imported here. 
+```{r}
+
+### all alerts ###
+alert_files <- map(list.files(here::here("district_alerts"), pattern="\\.xlsx$"), 
+                   ~paste0(here::here("district_alerts"), "/", .x)) %>% 
+  set_names(map(., ~str_remove_all(.x, 
+                                   paste0(here::here("district_alerts"), "/")))) %>% 
+  set_names(map(names(.), ~str_remove_all(.x, ".xlsx")))
+
+
+national_alerts <- map(alert_files, 
+    ~ rio::import(.x)) %>% 
+  list_rbind(names_to = "district") %>% 
+  mutate(week1 = isoweek(week),     # changed to isoweek given issues with matching n and observed in district_alerts_all
+         year = epiyear(week))
+
+
+### local only alerts ###
+alert_files_local <- map(list.files(here::here("district_alerts", "local"), pattern="\\.xlsx$"), 
+                   ~paste0(here::here("district_alerts", "local"), "/", .x)) %>% 
+  set_names(map(., ~str_remove_all(.x, 
+                                   paste0(here::here("district_alerts", "local"), "/")))) %>% 
+  set_names(map(names(.), ~str_remove_all(.x, ".xlsx")))
+
+
+national_alerts_local <- map(alert_files_local, 
+    ~ rio::import(.x)) %>% 
+  list_rbind(names_to = "district") %>% 
+  mutate(week1 = isoweek(week), 
+         year = epiyear(week))
+
+
+# this needs SOME cleaning... name changes to make combinations valid and 
+# accurate dates. otherwise messes up comparisons
+data_raw <- rio::import("znz_data_trends.xlsx") %>% 
+  mutate(date_fix1 = ifelse(str_detect(date_and_time_of_positive_results, "_"), 
+                                      NA_character_, 
+                                      date_and_time_of_positive_results),
+         date_fix2 = str_replace_all(as.character(janitor::excel_numeric_to_date(as.numeric(date_fix1))), 
+                                     "-", "_"), 
+         date_fix3 = ifelse(str_detect(date_and_time_of_positive_results, "t"),
+                                       str_extract(date_and_time_of_positive_results,
+                                                   "^.*(?=(t))"),
+                                       NA_character_),
+         date_fix4 = ifelse(is.na(date_fix2) & is.na(date_fix3),
+                            paste0(word(as.character(date_and_time_of_positive_results),
+                                        3, sep = "_"), "_",
+                                   word(as.character(date_and_time_of_positive_results),
+                                        2, sep = "_"), "_",
+                                   word(as.character(date_and_time_of_positive_results),
+                                        1, sep = "_")),
+                            NA),
+         date_fix5 = case_when(date_and_time_of_positive_results == "202413_05_21t13_30" ~ "2024_05_21",
+                               date_and_time_of_positive_results == "22024_04_10t19_59" ~ "2024_04_10",
+                               date_and_time_of_positive_results == "22023_12_11t15_20" ~ "2023_12_11",
+                               date_and_time_of_positive_results == "20244_08_31t14_30" ~ "2024_08_31",
+                               date_and_time_of_positive_results == "62024_06_05t12_54" ~ "2024_06_05",
+                               date_and_time_of_positive_results == "62024_02_20t20_49" ~ "2024_02_20",
+                               date_and_time_of_positive_results =="2024_12_31t00_21" & data_id == 35727 ~ "2024_01_08",
+                               .default = NA_character_), 
+         date_fix6 = ymd(case_when(!is.na(date_fix5) ~ date_fix5,
+                               !is.na(date_fix3) ~ date_fix3,
+                               !is.na(date_fix2) ~ date_fix2,
+                               !is.na(date_fix4) ~ date_fix4,
+                                  .default = NA)),
+         epi_week = lubridate::epiweek(date_fix6), 
+         iso_week = lubridate::isoweek(date_fix6), 
+         facility = ifelse(facility == "ff", "tunguu_phcu", facility), 
+         district_for_shehia = case_when(district_for_shehia == "magharibi_a" & shehia == "bopwe" ~ "wete", 
+                                         district_for_shehia == "magharibi_a" & shehia == "mpendae" ~ "mjini", 
+                                         district_for_shehia == "kaskazini_b" & shehia == "nungwi_kiungani" ~ "kaskazini_a",
+                                         district_for_shehia == "magharibi_a" & shehia == "urusi" ~ "mjini", 
+                                         .default = district_for_shehia), 
+         district_shehia_combo = paste0(district_for_shehia, "-", shehia)) %>% 
+  select(-c(date_fix, date_fix1, date_fix2, date_fix3, date_fix4, 
+                 date_fix5)) %>% 
+  rename(date_fix = date_fix6)
+
+
+
+data_raw_local <- data_raw %>% 
+  filter(!case_classification_categories %in% c("imported", "introduced"))
+
+data_deduped <- rio::import("deduped_unfiltered_data.xlsx") %>%  # 65244 obs
+  select(-date_fix) %>% 
+  rename(date_fix = date)
+
+data_filtered <- rio::import("data_filtered_for_tst.xlsx")
+
+data_filtered_local <- rio::import("data_filtered_for_tst.xlsx") %>% 
+    filter(!case_classification_categories %in% c("imported", "introduced"))
+
+  
+
+filtered_district_alerts <- rio::import("filtered_district_alert_alpha_1.xlsx")
+
+filtered_shehia_alerts <- rio::import("filtered_shehia_alert_alpha_1.xlsx")
+
+national_alerts_shehia <- rio::import("gold_std_shehia_alerts.xlsx") %>% 
+  mutate(week1 = epiweek(week), 
+         year = epiyear(week))
+
+national_alerts_local_shehia <- rio::import("gold_std_shehia_alerts_local.xlsx") %>% 
+  mutate(week1 = epiweek(week), 
+         year = epiyear(week))
+
+shehia_constant_thresholds <- rio::import("shehia_threshold_all.xlsx") %>% 
+  rename(district_for_shehia = district_n, 
+         shehia = shehia_nam) %>% 
+  select(-id)
+
+```
+
+
+```{r}
+
+data_agg_raw <- data_raw %>% 
+  mutate(year_week = yearweek(date_fix)) %>% 
+  count(year_week, district_for_shehia, .drop = FALSE) %>%   
+  complete(year_week, district_for_shehia, fill = list(n = 0)) %>% 
+  tsibble(key = district_for_shehia, index = year_week) %>% 
+  mutate(year = epiyear(year_week), 
+         week = isoweek(year_week)) %>%                                         # changed to isoweek
+  ungroup()
+
+data_agg_raw_local <- data_raw_local %>% 
+  mutate(year_week = yearweek(date_fix)) %>% 
+  count(year_week, district_for_shehia, .drop = FALSE) %>%   
+  complete(year_week, district_for_shehia, fill = list(n = 0)) %>% 
+  tsibble(key = district_for_shehia, index = year_week) %>% 
+  mutate(year = epiyear(year_week), 
+         week = isoweek(year_week)) %>%                                          # changed to isoweek
+  ungroup()
+
+# data_agg_dedupe <- data_deduped %>% 
+#   mutate(year_week = yearweek(date_fix)) %>% 
+#   count(year_week, district_for_shehia, .drop = FALSE) %>%   
+#   complete(year_week, district_for_shehia, fill = list(n = 0)) %>% 
+#   tsibble(key = district_for_shehia, index = year_week) %>% 
+#   mutate(year = epiyear(year_week), 
+#          week = epiweek(year_week)) %>% 
+#   ungroup()
+
+data_agg_filter <- data_filtered %>% 
+  mutate(year_week = yearweek(date_fix)) %>% 
+  count(year_week, district_for_shehia, .drop = FALSE) %>%   
+  complete(year_week, district_for_shehia, fill = list(n = 0)) %>% 
+  tsibble(key = district_for_shehia, index = year_week) %>% 
+  mutate(year = epiyear(year_week), 
+         week = isoweek(year_week)) %>%                                          # changed to isoweek
+  ungroup()
+
+data_agg_filter_local <- data_filtered_local %>% 
+  mutate(year_week = yearweek(date_fix)) %>% 
+  count(year_week, district_for_shehia, .drop = FALSE) %>%   
+  complete(year_week, district_for_shehia, fill = list(n = 0)) %>% 
+  tsibble(key = district_for_shehia, index = year_week) %>% 
+  mutate(year = epiyear(year_week), 
+         week = isoweek(year_week)) %>%                                         # changed to isoweek 
+  ungroup()
+
+routine_data <- list(data_agg_raw,
+                     data_agg_filter,
+                     data_agg_raw_local,
+                     data_agg_filter_local)
+```
+
+
+# WHO alerts at district level {.tabset .tabset-pills}
+```{r }
+
+
+who_sd_test <- map(routine_data, 
+              ~.x %>% 
+                arrange(district_for_shehia, week, year) %>% 
+                group_by(district_for_shehia, week) %>% 
+                mutate(n_lag = lag(n),
+                       running_mean = runner::runner(n_lag, 
+                                                     k = 5, 
+                                                     f = function(x){mean(x, na.rm = TRUE)}), 
+                       running_2sd = runner::runner(n_lag, 
+                                                    k = 5, 
+                                                    f = function(x){2*sd(x, na.rm = TRUE)}), 
+                       threshold_initial = running_mean + running_2sd,
+                       list_id = row_number(),
+                       values = list(runner::runner(n_lag, 
+                                                    k = 5, 
+                                                    f = function(x){list(x)}))) %>% 
+                rowwise() %>% 
+                mutate(values_1 = map(list(values[[eval(list_id)]]),~as.integer(.x))))
+
+out_a <- list()
+for (a in 1:length(who_sd_test)){
+  df <- who_sd_test[[a]]
+
+
+out_b <- list()
+for (i in 1:length(df$values_1)){
+  b <- df$values_1[[i]]
+  out_c <- list()
+  for(e in 1:length(b)){
+    c <- b
+    c[[e]] <- NA
+    d <- mean(unlist(c), na.rm = TRUE)+2*sd(unlist(c), na.rm = TRUE) # new thresholds without value of interest
+
+    out_c[[e]] <- d  # change to d if want to view thresholds
+  }
+  out_b[[i]] <- out_c
+}
+out_a[[a]] <- out_b
+}
+
+
+out_a1 <- map(out_a, ~tibble(mod_threshold = .x))
+
+who_sd <- map2(who_sd_test, out_a1, 
+               bind_cols) %>% 
+  map(~.x %>% 
+        mutate(threshold_aggressive = min(unlist(list(map2(values_1, mod_threshold, 
+                          ~case_when(.x > .y ~ .y, 
+                                     .default =  NA_real_)))), na.rm = TRUE), 
+         case_count_censor = max(unlist(list(map2(values_1, mod_threshold, 
+                          ~case_when(.x > .y ~ .x, 
+                                     .default =  NA_real_)))), na.rm = TRUE)) %>%
+        ungroup() %>% 
+        mutate(n_prime = case_when(n > threshold_initial ~ NA_real_,
+                                           n <= threshold_initial ~ n, 
+                                           is.na(threshold_initial) ~ n, 
+                                           .default = 999)) %>% 
+                group_by(district_for_shehia, week) %>% 
+                mutate(n_lag_prime = lag(n_prime),
+                running_mean_prime = runner::runner(n_lag_prime, 
+                                                           k = 5, 
+                                                           f = function(x){mean(x, na.rm = TRUE)}), 
+                running_2sd_prime = runner::runner(n_lag_prime, 
+                                                          k = 5, 
+                                                          f = function(x){2*sd(x, na.rm = TRUE)})) %>%
+                ungroup() %>% 
+                mutate(alert_2sd = case_when(n > running_mean_prime + running_2sd_prime ~ "alert",
+                                             n <= running_mean_prime + running_2sd_prime ~ "non_alert", 
+                                             is.na(running_mean_prime) | is.na(running_2sd_prime) ~ NA_character_, 
+                                             .default = "error"), 
+                       threshold_2sd = running_mean_prime + running_2sd_prime,
+                       threshold_2sd_aggressive = case_when(!is.na(threshold_aggressive) & threshold_aggressive != Inf  ~ threshold_aggressive, 
+                                                            .default = threshold_2sd), 
+                       alert_2sd_aggressive = case_when(n >threshold_2sd_aggressive ~ "alert",
+                                                        is.na(threshold_2sd_aggressive) | threshold_2sd_aggressive == Inf  ~ NA_character_, 
+                                             n <= threshold_2sd_aggressive ~ "non_alert", 
+                                             .default = "error")
+                       ) %>% 
+                select(-c(11:13)) %>% 
+        relocate(threshold_initial, threshold_2sd, case_count_censor, threshold_aggressive, .after = last_col()) %>% 
+        mutate(case_count_censor = case_when(case_count_censor == -Inf ~ NA_real_, 
+                                             .default = case_count_censor), 
+               across(c(threshold_aggressive, threshold_2sd_aggressive), ~case_when(.x == Inf ~ NA_real_, 
+                                             .default = .x)))
+              ) %>% 
+  set_names("raw", "filter", "local-raw", "local-filter")
+
+
+#export all to manually check values/coding           
+list_rbind(who_sd, names_to = "dataset") %>% 
+  mutate(id = row_number()) %>% 
+  rio::export("manual_check_2sd.xlsx")
+
+
+who_sd <- who_sd %>% 
+  map(~.x %>% 
+  select(district_for_shehia, year_week, 
+         threshold_initial,
+         threshold_2sd, alert_2sd,
+         threshold_2sd_aggressive, alert_2sd_aggressive)
+  )
+#test <- who_sd[[1]]
+
+################# who 75 percentile method ####################################
+who_75 <- map(routine_data, 
+              ~.x %>% 
+                arrange(district_for_shehia, week, year) %>% 
+                group_by(district_for_shehia, week) %>%
+                mutate(n_lag = lag(n),
+                       threshold = runner::runner(n_lag, 
+                                                  k = 5, 
+                                                  f = function(x){quantile(x, probs = 0.75, 
+                                                        na.rm = TRUE)})) %>%
+                ungroup() %>% 
+                mutate(alert_75 = case_when(n > threshold ~ "alert",
+                                            n <= threshold ~ "non_alert", 
+                                            is.na(threshold) ~ NA_character_,
+                                            .default = "error")) %>% 
+                arrange(district_for_shehia, year, week) %>% 
+                group_by(district_for_shehia) %>% 
+                mutate(alert_75_prime = case_when(alert_75 == "non_alert" ~ "non_alert",
+                                                  is.na(alert_75) ~ NA_character_,
+                                                  alert_75 == "alert" & (lag(alert_75) == "alert" | lead(alert_75) == "alert") ~ "alert", 
+                                                  alert_75 == "alert" & lag(alert_75) == "non_alert" & lead(alert_75) == "non_alert" ~ "non_alert", 
+                                                  .default = "error")) %>% 
+                ungroup() %>% 
+                select(district_for_shehia, year_week, 
+                       threshold_75 = threshold, alert_75, 
+                       alert_75_prime)
+              ) %>% 
+  set_names("raw", "filter", "local-raw", "local-filter")
+
+##     export all to manually check values/coding     
+
+# comment out select command above for manual 
+
+#  list_rbind(who_75, names_to = "dataset") %>% 
+#    mutate(id = row_number()) %>% 
+#    rio::export("manual_check_75.xlsx")
+
+
+################# who c-sum percentile method ##################################
+
+who_csum <- map(routine_data, ~.x %>% 
+  group_by(district_for_shehia) %>% 
+  mutate(back = lag(week), 
+         back_year = lag(year), 
+         back_n = lag(n), 
+         forward = lead(week), 
+         forward_year = lead(year), 
+         forward_n = lead(n)) %>% 
+  ungroup() %>% 
+  arrange(district_for_shehia, week, year) %>% 
+  rowwise() %>% 
+  mutate(window_counts_current = list(c(back_n, n, forward_n))) %>% 
+  ungroup() %>% 
+  select(-c(back, back_year, back_n, forward, forward_year, forward_n)) %>% 
+  mutate(window_counts_prev = case_when(year == 2019 ~ NA, 
+                                        .default = lag(window_counts_current))) %>% 
+  group_by(district_for_shehia, week) %>% 
+  mutate(cum_years = map(seq_along(year), ~list_c(window_counts_prev[max(1, .x-4):.x])), 
+         threshold_csum =  map_dbl(cum_years, 
+                                   ~sum(.x, na.rm = TRUE))/length(cum_years)) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(threshold_csum = case_when(is_empty(cum_years) | length(cum_years) <= 6 ~ NA_real_, 
+                                 .default = threshold_csum), 
+         alert_csum = case_when(n > threshold_csum ~ "alert", 
+                                n <= threshold_csum ~ "non_alert",
+                                is.na(threshold_csum) ~NA_character_))
+  ) %>% 
+  set_names("raw", "filter", "local-raw", "local-filter")
+
+who_csum %>% 
+  map(~.x %>% 
+        select(-starts_with("window")) %>% 
+        select(-cum_years)) %>% 
+  list_rbind(names_to = "dataset") %>% 
+  mutate(id = row_number()) %>% 
+  rio::export("manual_check_csum.xlsx")
+
+who_csum <- who_csum %>% 
+  map(~.x %>% 
+        select(district_for_shehia, year_week, 
+                       threshold_csum, alert_csum))
+  
+
+district_alerts_raw <- pmap(list(routine_data, 
+                                 who_sd, 
+                                 who_75, 
+                                 who_csum), 
+                            function(a,b,c,d){reduce(list(a,b,c,d),
+                              left_join,
+                                by = c("year_week", "district_for_shehia")) %>% 
+                                 mutate(week1 = isoweek(year_week), 
+         year = epiyear(year_week)) %>% 
+  as_tibble()})
+
+
+district_alerts_all <- map2(district_alerts_raw, 
+     list(national_alerts,
+          national_alerts,
+          national_alerts_local, 
+          national_alerts_local),
+     ~right_join(.x, as_tibble(.y), by = c("district_for_shehia" = "district", 
+                                     "week1", 
+                                     "year")) %>% 
+       drop_na(year_week)                                          
+) %>% 
+  set_names("raw", "filter", "local-raw", "local-filter")
+
+
+#test <- district_alerts_all[[1]]
+#names(test)
+
+#  performance <- function(x){
+#    case_when(is.na(x) ~ NA_character_,
+#              x == "alert" & real_outbreak == "no" ~ "false_positive", 
+#              x == "alert" & real_outbreak == "yes" ~ "true_positive", 
+#              x == "non_alert" & real_outbreak == "no" ~ "true_negative", 
+#              x == "non_alert" & real_outbreak == "yes" ~ "false_negative", 
+#              .default = "error")
+#  }
+#  
+#  performance_zamep <- function(x){
+#    case_when(is.na(x) ~ NA_character_,
+#              x == "alert" & real_outbreak == "no" ~ "false_positive", 
+#              x == "alert" & real_outbreak == "yes" ~ "true_positive", 
+#              x == "non_alert" & real_outbreak == "no" ~ "true_negative", 
+#              x == "non_alert" & real_outbreak == "yes" ~ "false_negative", 
+#              .default = "error")
+#  }
+
+
+district_metrics <- map(district_alerts_all, ~.x %>% 
+  select(year_week, 
+         district = district_for_shehia, 
+         year, 
+         week = week.x, 
+         alert_2sd, 
+         alert_2sd_aggressive,
+         alert_75, 
+         alert_75_prime,
+         alert_csum, 
+         real_outbreak) %>% 
+  group_by(district) %>% 
+  mutate(first_week = case_when(real_outbreak == "yes" & lag(real_outbreak) == "no" ~ "yes", 
+                                .default = NA),
+         first_week_id = case_when(real_outbreak == "yes" & lag(real_outbreak) == "no" ~ year_week, 
+                                .default = NA)) %>%
+  ungroup() %>% 
+  group_by(district, real_outbreak) %>% 
+  fill(first_week_id) %>% 
+  ungroup() %>% 
+  pivot_longer(-c(year_week, district, year, week, real_outbreak, first_week, first_week_id)) %>% 
+  mutate(performance = case_when(is.na(value) ~ NA_character_,
+            value == "alert" & real_outbreak == "no" ~ "false_positive", 
+            value == "alert" & real_outbreak == "yes" ~ "true_positive", 
+            value == "non_alert" & real_outbreak == "no" ~ "true_negative", 
+            value == "non_alert" & real_outbreak == "yes" ~ "false_negative", 
+            .default = "error"), 
+         performance_zamep = case_when(is.na(value) ~ NA_character_,
+            value == "alert" & real_outbreak == "no" ~ "false_positive", 
+            value == "alert" & real_outbreak == "yes" ~ "true_positive", 
+            value == "non_alert" & real_outbreak == "no" ~ "true_negative", 
+            value == "non_alert" & real_outbreak == "yes" ~ "false_negative", 
+            .default = "error"),) %>% 
+  mutate(algo = paste0("who_", name), 
+         algo = str_remove(algo, "_alert"),
+         name = "alert") %>% 
+  split(.$algo) %>% 
+    map(~.x %>% 
+          group_by(district, first_week_id) %>% 
+          mutate(ever_detected = ifelse(real_outbreak == "yes", list(performance), NA)) %>% 
+          ungroup() %>% 
+          rowwise() %>% 
+          mutate(ever_detected1 = "true_positive" %in% ever_detected) %>% 
+          ungroup()
+        ) 
+  )
+
+
+
+district_metrics_event <- map(district_metrics, 
+                              ~.x %>% 
+  map(~.x %>% 
+        filter(first_week == "yes") %>% 
+        group_by(district) %>% 
+        summarise(num_outbreak = n(), 
+                  prob_first_week = paste0(sum(performance == "true_positive", na.rm = TRUE), 
+                                               "/", 
+                                               n(), 
+                                               " (", 
+                                               round(100*sum(performance == "true_positive", na.rm = TRUE)/n(), 1),
+                                               "%)"),
+                  prob_ever_detected = paste0(sum(ever_detected1 == TRUE), 
+                                              "/", 
+                                              n(), 
+                                              " (", 
+                                              round(100*sum(ever_detected1 == TRUE)/n(),1), 
+                                              "%)")) %>% 
+        ungroup()
+      )
+)
+
+
+totals <- map(district_metrics, 
+              ~.x%>% 
+  map(~.x %>% 
+  group_by(district, real_outbreak, performance) %>% 
+  summarise(count = n()) %>% 
+    ungroup() %>% 
+  pivot_wider(names_from = c(real_outbreak, performance), 
+              values_from = count)) %>% 
+   map(., function(x){if (!"no_NA" %in% names(x)){x %>% tibble::add_column(no_NA = rep(0,11))}
+     else{x}}) %>% 
+    map(., function(x){if (!"yes_NA" %in% names(x)){x %>% tibble::add_column(yes_NA = rep(0,11))}
+     else{x}}) %>% 
+    map(~.x %>% 
+         # pivot_wider(names_from = c(real_outbreak, performance), 
+        #      values_from = count) %>% 
+    mutate(across(c(2:7), ~replace_na(.x, 0)), 
+           district = str_to_title(str_replace_all(district, "_", " "))) %>% 
+    relocate(district, 
+             yes_true_positive, 
+             yes_false_negative, 
+             yes_NA, 
+             no_true_negative, 
+             no_false_positive, 
+             no_NA) %>% 
+    flextable::flextable() %>% 
+    flextable::set_header_labels(
+      district = "District",
+                       no_false_positive = "WHO Positive",
+                       no_true_negative = "WHO Negative", 
+                       no_NA = "WHO NA", 
+                       yes_false_negative = "WHO Negative", 
+                       yes_true_positive = "WHO Positive", 
+                       yes_NA = "WHO NA") %>% 
+      flextable::add_header_row(values = c("", "True Outbreak", "No Outbreak"), 
+                                colwidths = c(1,3,3)) %>% 
+    flextable::bg(j=c(2:4), bg = "#EFEFEF", part = "all")
+  )
+)
+   
+district_metrics_week <- map(district_metrics, 
+                             ~.x %>% 
+  map(~.x %>% 
+        filter(!is.na(real_outbreak)) %>% 
+  group_by(district) %>% 
+  summarise(weeks = sum(!is.na(real_outbreak)), 
+            weeks_outbreak = sum(real_outbreak == "yes", na.rm = TRUE), 
+            weeks_routine = sum(real_outbreak == "no", na.rm = TRUE), 
+            n_outbreak = sum(first_week=="yes", na.rm = TRUE),
+            no_call = paste0(sum(is.na(performance) & real_outbreak == "no"), 
+                                 "/", 
+                                 sum(real_outbreak == "no"), 
+                                 " (",
+                                 round(100*sum(is.na(performance) & real_outbreak == "no")/sum(real_outbreak == "no"), 1), 
+                                 "%)"),
+            no_call_outbreak = paste0(sum(is.na(performance) & real_outbreak == "yes"), 
+                                 "/", 
+                                 sum(real_outbreak == "yes"), 
+                                 " (",
+                                 round(100*sum(is.na(performance) & real_outbreak == "yes")/sum(real_outbreak == "yes"), 1), 
+                                 "%)"),
+            false_pos = paste0(sum(performance == "false_positive", na.rm = TRUE),
+                               "/", 
+                               weeks_routine,
+                               " (", 
+                               round(100*sum(performance == "false_positive", 
+                                                   na.rm = TRUE)/weeks_routine, 1), 
+                               "%)"),
+            sens = paste0(sum(performance == "true_positive", na.rm = TRUE),
+                          "/",
+                          weeks_outbreak, 
+                          " (",
+                          round(100*sum(performance == "true_positive", 
+                                        na.rm = TRUE)/weeks_outbreak, 1),
+                          "%)"),
+            spec = paste0(sum(performance == "true_negative", na.rm = TRUE), 
+                          "/", weeks_routine,
+                          " (", 
+                          round(100*sum(performance == "true_negative", 
+                                        na.rm = TRUE)/weeks_routine, 1),
+                          "%)"),
+            ppv = paste0(sum(performance == "true_positive", na.rm = TRUE), 
+                         "/", 
+                         sum(performance == "true_positive", 
+                              na.rm = TRUE)+  sum(performance == "false_positive", 
+                                                  na.rm = TRUE), 
+                         " (", 
+                         round(100*sum(performance == "true_positive", na.rm = TRUE)/ 
+                         (sum(performance == "true_positive", 
+                              na.rm = TRUE)+  sum(performance == "false_positive", 
+                                                  na.rm = TRUE)),1),
+                         "%)"),
+            npv = paste0(sum(performance == "true_negative", na.rm = TRUE), 
+                         "/", 
+                         sum(performance == "true_negative", 
+                             na.rm = TRUE)+ 
+                           sum(performance == "false_negative", 
+                               na.rm = TRUE), 
+                         " (", 
+                         round(100*sum(performance == "true_negative", na.rm = TRUE)/ 
+                         (sum(performance == "true_negative", 
+                             na.rm = TRUE)+ 
+                           sum(performance == "false_negative", 
+                               na.rm = TRUE)), 1),
+                         "%)"
+  )) %>% 
+    ungroup())
+)
+
+
+district_metrics <- map2(district_metrics_week, district_metrics_event,
+                         function(a,b)map2(a,b, 
+                                           ~left_join(.x,.y, by = "district")))
+
+district_metrics1 <- map2(district_metrics, 
+                         names(district_metrics), 
+                         function(a,b){map(a, ~.x %>% 
+                                             mutate(who_data = b))})
+  
+  
+district_merge <- pmap(list(district_metrics1[[1]], 
+                  district_metrics1[[2]], 
+                  district_metrics1[[3]], 
+                  district_metrics1[[4]]), 
+             function(a,b,c,d)reduce(list(a,b,c, d), bind_rows)
+) %>% 
+  map(~.x %>% 
+        mutate(who_data = factor(who_data, levels = c("raw",  
+                                                      "filter", 
+                                                      "local-raw", 
+                                                      "local-filter"))) %>% 
+        arrange(district, who_data))
+
+
+
+temp <- map(district_merge, ~.x %>%  
+  select(-c(weeks, weeks_outbreak, weeks_routine, n_outbreak, no_call,
+                no_call_outbreak, num_outbreak, false_pos)) %>% 
+    mutate(district = str_to_title(str_replace_all(district, "_", " "))) %>%
+    relocate(`Probability ever detected` = prob_ever_detected, .after = district) %>% 
+    relocate(`Probability detected first week` = prob_first_week, 
+           .after = `Probability ever detected`) %>% 
+    relocate(Sensitivity = sens, .after = `Probability detected first week`) %>% 
+    relocate(Specificity = spec, .after = Sensitivity) %>% 
+    rename(PPV = ppv, 
+           NPV = npv)
+  ) %>% 
+  list_rbind(names_to = "algo")
+
+rio::export(temp, file = paste0(here::here("pdf_report"), 
+                                "/district_metrics_all.xlsx"))
+```
+
+
+```{r}
+# ZAMEP gold standard
+# renamed `Outbreak remark (YES/NO)` to real_outbreak and recoded to deal with caps...
+# only done for all cases; don't have change for local only; remainder of code the same
+
+district_metrics_zamep <- map(district_alerts_all[c(1:2)], ~.x %>% 
+  select(-real_outbreak) %>%                         
+  select(year_week, 
+         district = district_for_shehia, 
+         year, 
+         week = week.x, 
+         alert_2sd, 
+         alert_2sd_aggressive,
+         alert_75, 
+         alert_75_prime,
+         alert_csum, 
+         real_outbreak = `Outbreak remark (YES/NO)`) %>% 
+  mutate(real_outbreak = case_match(real_outbreak, 
+                                    "YES" ~ "yes", 
+                                    "NO" ~ "no")) %>% 
+  group_by(district) %>% 
+  mutate(first_week = case_when(real_outbreak == "yes" & lag(real_outbreak) == "no" ~ "yes", 
+                                .default = NA),
+         first_week_id = case_when(real_outbreak == "yes" & lag(real_outbreak) == "no" ~ year_week, 
+                                .default = NA)) %>%
+  ungroup() %>% 
+  group_by(district, real_outbreak) %>% 
+  fill(first_week_id) %>% 
+  ungroup() %>% 
+  pivot_longer(-c(year_week, district, year, week, real_outbreak, first_week, first_week_id)) %>% 
+  mutate(performance = case_when(is.na(value) ~ NA_character_,
+            value == "alert" & real_outbreak == "no" ~ "false_positive", 
+            value == "alert" & real_outbreak == "yes" ~ "true_positive", 
+            value == "non_alert" & real_outbreak == "no" ~ "true_negative", 
+            value == "non_alert" & real_outbreak == "yes" ~ "false_negative", 
+            .default = "error"), 
+         performance_zamep = case_when(is.na(value) ~ NA_character_,
+            value == "alert" & real_outbreak == "no" ~ "false_positive", 
+            value == "alert" & real_outbreak == "yes" ~ "true_positive", 
+            value == "non_alert" & real_outbreak == "no" ~ "true_negative", 
+            value == "non_alert" & real_outbreak == "yes" ~ "false_negative", 
+            .default = "error"),) %>% 
+  mutate(algo = paste0("who_", name), 
+         algo = str_remove(algo, "_alert"),
+         name = "alert") %>% 
+  split(.$algo) %>% 
+    map(~.x %>% 
+          group_by(district, first_week_id) %>% 
+          mutate(ever_detected = ifelse(real_outbreak == "yes", list(performance), NA)) %>% 
+          ungroup() %>% 
+          rowwise() %>% 
+          mutate(ever_detected1 = "true_positive" %in% ever_detected) %>% 
+          ungroup()
+        ) 
+  )
+
+
+
+
+district_metrics_event_zamep <- map(district_metrics_zamep, 
+                              ~.x %>% 
+  map(~.x %>% 
+        filter(first_week == "yes") %>% 
+        group_by(district) %>% 
+        summarise(num_outbreak = n(), 
+                  prob_first_week = paste0(sum(performance == "true_positive", na.rm = TRUE), 
+                                               "/", 
+                                               n(), 
+                                               " (", 
+                                               round(100*sum(performance == "true_positive", na.rm = TRUE)/n(), 1),
+                                               "%)"),
+                  prob_ever_detected = paste0(sum(ever_detected1 == TRUE), 
+                                              "/", 
+                                              n(), 
+                                              " (", 
+                                              round(100*sum(ever_detected1 == TRUE)/n(),1), 
+                                              "%)")) %>% 
+        ungroup()
+      )
+)
+
+
+totals_zamep <- map(district_metrics_zamep, 
+              ~.x%>% 
+  map(~.x %>% 
+  group_by(district, real_outbreak, performance) %>% 
+  summarise(count = n()) %>% 
+    ungroup() %>% 
+  pivot_wider(names_from = c(real_outbreak, performance), 
+              values_from = count)) %>% 
+   map(., function(x){if (!"no_NA" %in% names(x)){x %>% tibble::add_column(no_NA = rep(0,11))}
+     else{x}}) %>% 
+    map(., function(x){if (!"yes_NA" %in% names(x)){x %>% tibble::add_column(yes_NA = rep(0,11))}
+     else{x}}) %>% 
+    map(~.x %>% 
+         # pivot_wider(names_from = c(real_outbreak, performance), 
+        #      values_from = count) %>% 
+    mutate(across(c(2:7), ~replace_na(.x, 0)), 
+           district = str_to_title(str_replace_all(district, "_", " "))) %>% 
+    relocate(district, 
+             yes_true_positive, 
+             yes_false_negative, 
+             yes_NA, 
+             no_true_negative, 
+             no_false_positive, 
+             no_NA) %>% 
+    flextable::flextable() %>% 
+    flextable::set_header_labels(
+      district = "District",
+                       no_false_positive = "WHO Positive",
+                       no_true_negative = "WHO Negative", 
+                       no_NA = "WHO NA", 
+                       yes_false_negative = "WHO Negative", 
+                       yes_true_positive = "WHO Positive", 
+                       yes_NA = "WHO NA") %>% 
+      flextable::add_header_row(values = c("", "True Outbreak", "No Outbreak"), 
+                                colwidths = c(1,3,3)) %>% 
+    flextable::bg(j=c(2:4), bg = "#EFEFEF", part = "all")
+  )
+)
+   
+district_metrics_week_zamep <- map(district_metrics_zamep, 
+                             ~.x %>% 
+  map(~.x %>% 
+        filter(!is.na(real_outbreak)) %>% 
+  group_by(district) %>% 
+  summarise(weeks = sum(!is.na(real_outbreak)), 
+            weeks_outbreak = sum(real_outbreak == "yes", na.rm = TRUE), 
+            weeks_routine = sum(real_outbreak == "no", na.rm = TRUE), 
+            n_outbreak = sum(first_week=="yes", na.rm = TRUE),
+            no_call = paste0(sum(is.na(performance) & real_outbreak == "no"), 
+                                 "/", 
+                                 sum(real_outbreak == "no"), 
+                                 " (",
+                                 round(100*sum(is.na(performance) & real_outbreak == "no")/sum(real_outbreak == "no"), 1), 
+                                 "%)"),
+            no_call_outbreak = paste0(sum(is.na(performance) & real_outbreak == "yes"), 
+                                 "/", 
+                                 sum(real_outbreak == "yes"), 
+                                 " (",
+                                 round(100*sum(is.na(performance) & real_outbreak == "yes")/sum(real_outbreak == "yes"), 1), 
+                                 "%)"),
+            false_pos = paste0(sum(performance == "false_positive", na.rm = TRUE),
+                               "/", 
+                               weeks_routine,
+                               " (", 
+                               round(100*sum(performance == "false_positive", 
+                                                   na.rm = TRUE)/weeks_routine, 1), 
+                               "%)"),
+            sens = paste0(sum(performance == "true_positive", na.rm = TRUE),
+                          "/",
+                          weeks_outbreak, 
+                          " (",
+                          round(100*sum(performance == "true_positive", 
+                                        na.rm = TRUE)/weeks_outbreak, 1),
+                          "%)"),
+            spec = paste0(sum(performance == "true_negative", na.rm = TRUE), 
+                          "/", weeks_routine,
+                          " (", 
+                          round(100*sum(performance == "true_negative", 
+                                        na.rm = TRUE)/weeks_routine, 1),
+                          "%)"),
+            ppv = paste0(sum(performance == "true_positive", na.rm = TRUE), 
+                         "/", 
+                         sum(performance == "true_positive", 
+                              na.rm = TRUE)+  sum(performance == "false_positive", 
+                                                  na.rm = TRUE), 
+                         " (", 
+                         round(100*sum(performance == "true_positive", na.rm = TRUE)/ 
+                         (sum(performance == "true_positive", 
+                              na.rm = TRUE)+  sum(performance == "false_positive", 
+                                                  na.rm = TRUE)),1),
+                         "%)"),
+            npv = paste0(sum(performance == "true_negative", na.rm = TRUE), 
+                         "/", 
+                         sum(performance == "true_negative", 
+                             na.rm = TRUE)+ 
+                           sum(performance == "false_negative", 
+                               na.rm = TRUE), 
+                         " (", 
+                         round(100*sum(performance == "true_negative", na.rm = TRUE)/ 
+                         (sum(performance == "true_negative", 
+                             na.rm = TRUE)+ 
+                           sum(performance == "false_negative", 
+                               na.rm = TRUE)), 1),
+                         "%)"
+  )) %>% 
+    ungroup())
+)
+
+
+district_metrics_zamep <- map2(district_metrics_week_zamep, 
+                               district_metrics_event_zamep,
+                         function(a,b)map2(a,b, 
+                                           ~left_join(.x,.y, by = "district")))
+
+district_metrics1_zamep <- map2(district_metrics_zamep, 
+                         names(district_metrics_zamep), 
+                         function(a,b){map(a, ~.x %>% 
+                                             mutate(who_data = b))})
+  
+  
+district_merge_zamep <- pmap(list(district_metrics1_zamep[[1]], 
+                  district_metrics1_zamep[[2]]), 
+             function(a,b)reduce(list(a,b), bind_rows)
+) %>% 
+  map(~.x %>% 
+        mutate(who_data = factor(who_data, levels = c("raw",  
+                                                      "filter", 
+                                                      "local-raw", 
+                                                      "local-filter"))) %>% 
+        arrange(district, who_data))
+
+
+
+temp1 <- map(district_merge_zamep, ~.x %>%  
+  select(-c(weeks, weeks_outbreak, weeks_routine, n_outbreak, no_call,
+                no_call_outbreak, num_outbreak, false_pos)) %>% 
+    mutate(district = str_to_title(str_replace_all(district, "_", " "))) %>%
+    relocate(`Probability ever detected` = prob_ever_detected, .after = district) %>% 
+    relocate(`Probability detected first week` = prob_first_week, 
+           .after = `Probability ever detected`) %>% 
+    relocate(Sensitivity = sens, .after = `Probability detected first week`) %>% 
+    relocate(Specificity = spec, .after = Sensitivity) %>% 
+    rename(PPV = ppv, 
+           NPV = npv)
+  ) %>% 
+  list_rbind(names_to = "algo")
+
+rio::export(temp1, file = paste0(here::here("pdf_report"), 
+                                "/district_metrics_zamep_all.xlsx"))
+```
+
+
+```{r}
+threshold_comp <- district_alerts_all %>% 
+  map(~.x %>% 
+        select(year_week, district_for_shehia, 
+               n, threshold_2sd, threshold_2sd_aggressive, 
+               threshold_75, threshold_csum, 
+               threshold) %>% 
+        mutate(across(c(3:8), ~.x - threshold)) %>%
+        split(.$district_for_shehia) %>% 
+        map(function(x){
+          a <- x %>% 
+            summarise(mean_2sd = round(mean(threshold_2sd, na.rm = TRUE), 1), 
+                      mean_2sd_aggressive = round(mean(threshold_2sd_aggressive, na.rm = TRUE),1),
+                      mean_75 = round(mean(threshold_75, na.rm = TRUE),1),
+                      mean_csum = round(mean(threshold_csum, na.rm = TRUE),1),
+                      weeks_over_2sd = sum(threshold_2sd > 0, na.rm = TRUE), 
+                      weeks_over_2sd_aggressive = sum(threshold_2sd_aggressive > 0, na.rm = TRUE), 
+                      weeks_over_75 = sum(threshold_75 > 0, na.rm = TRUE), 
+                      weeks_over_csum = sum(threshold_csum > 0, na.rm = TRUE))
+          
+          a_1 <- max(max(x$threshold_2sd, na.rm = TRUE),
+                     max(x$threshold_75, na.rm = TRUE),
+                     max(x$threshold_csum, na.rm = TRUE)) - 5
+            
+          
+          b <- ggplot(x)+
+              geom_col(aes(x = year_week, y = n), 
+                       fill = "grey95")+
+              geom_hline(yintercept = 0)+
+              geom_path(aes(x= year_week, y = threshold_2sd), 
+                        color = "firebrick4", 
+                        linewidth = 1.2
+                        )+
+              geom_path(aes(x= year_week, y = threshold_2sd_aggressive), 
+                        color = "firebrick4", 
+                        linewidth = 0.5)+
+              geom_path(aes(x= year_week, y = threshold_75), 
+                        color = "cadetblue", 
+                        linewidth = 1.2)+
+              geom_path(aes(x= year_week, y = threshold_csum), 
+                        color = "bisque4", 
+                        linewidth = 1.2)+
+              theme_minimal()+
+            labs(x = "Week Year", 
+                 y = expression(Delta~Threshold))
+          
+          x_min <- min(min(x$threshold_2sd, na.rm = TRUE), 
+                       min(x$threshold_75, na.rm = TRUE), 
+                       min(x$threshold_csum, na.rm = TRUE))
+          
+          x_max <- max(max(x$threshold_2sd, na.rm = TRUE), 
+                       max(x$threshold_75, na.rm = TRUE), 
+                       max(x$threshold_csum, na.rm = TRUE))
+          
+          binwid <- (x_max-x_min)/30
+
+          b1 <- ggplot(x)+
+              geom_histogram(aes(x = threshold_2sd),
+                             color = "black",  
+                       fill = "firebrick4", 
+                       binwidth = binwid)+
+              geom_vline(xintercept = 0)+
+              annotate("text", label = "Farrington", y = Inf, x = 0, angle = 90, 
+                     hjust = 1, vjust = 0)+
+            theme_minimal()+
+            coord_cartesian(xlim = c(x_min, x_max))+
+            labs(title = "Mean + 2SD", 
+                 x = element_blank(), 
+                 y = "Week Count")
+          
+          b2 <- ggplot(x)+
+              geom_histogram(aes(x = threshold_75), 
+                             color = "black", 
+                       fill = "cadetblue", 
+                       binwidth = binwid)+
+              geom_vline(xintercept = 0)+
+            theme_minimal()+
+            coord_cartesian(xlim = c(x_min, x_max))+
+            labs(title = "75th percentile", 
+                 x = element_blank(), 
+                 y = "Week Count")
+          
+          b3 <- ggplot(x)+
+              geom_histogram(aes(x = threshold_csum), 
+                             color = "black", 
+                       fill = "bisque4", 
+                       binwidth = binwid)+
+              geom_vline(xintercept = 0)+
+            theme_minimal()+            
+            coord_cartesian(xlim = c(x_min, x_max))+
+            labs(title = "C-SUM", 
+                 x = expression(Delta~Threshold), 
+                 y = "Week Count")
+          
+          b_penultimate <- cowplot::plot_grid(b1, b2, b3, ncol = 1, align = "hv")
+          b_final <- cowplot::plot_grid(b, b_penultimate, ncol = 2, 
+                                        rel_widths = c(5,3))
+
+          return(b_final)
+        })
+  )
+
+map2(threshold_comp[[2]], names(threshold_comp[[2]]),
+     ~ggsave(plot = .x, filename = paste0(here::here("pdf_report", 
+                                                    "threshold_comp", 
+                                                    "all_cases"),
+                                          "/",
+                                                    .y, 
+                                                    ".png"
+                                                    )))
+
+map2(threshold_comp[[4]], names(threshold_comp[[4]]),
+     ~ggsave(plot = .x, filename = paste0(here::here("pdf_report", 
+                                                    "threshold_comp", 
+                                                    "local_cases"),
+                                          "/",
+                                                    .y, 
+                                                    ".png"
+                                                    )))
+
+```
+
+
+
+```{r}
+threshold_comp[[2]][[1]]
+```
+
+
+
+
+```{r}
+# figures for report to accompany table... 
+#  show performance for each data set/comparison
+
+slope_graph <- temp %>% 
+  mutate(across(c(3:8), ~as.numeric(str_remove_all(str_extract(.x, "\\((.*?)%"), "\\(|%")))) %>% 
+  select(-c(3,4)) %>% 
+  pivot_longer(cols = c("Sensitivity", "Specificity", "PPV", "NPV")) %>% 
+  mutate(district = factor(district, 
+                           levels = c("Magharibi A","Magharibi B","Mjini",
+                                      "Chakechake", "Micheweni", "Mkoani", "Wete",
+                                      "Kaskazini A", "Kaskazini B", "Kati",
+                                      "Kusini")),
+         who_data1 = factor(case_match(who_data, "raw" ~ "All", 
+                                "filter" ~ "Subset", 
+                                "local-raw" ~ "All Local", 
+                                "local-filter" ~ "Subset Local"), 
+                            levels = c("All", 
+                                       "Subset", 
+                                       "All Local", 
+                                       "Subset Local"))) %>% 
+  split(.$algo) %>% 
+  map(~.x %>% 
+        split(.$name))
+
+purp <- colorRampPalette(c("#646299", "#997F62"))(4)
+red <- colorRampPalette(c("#D7583A", "grey"))(3)
+blue <- colorRampPalette(c("#73A5A8", "#A5A873"))(4)
+pal <- c(red, purp, blue)                        
+
+all_slopes <- slope_graph %>% 
+  map(~.x %>% 
+        map2(., names(.), 
+             function(a,b) {a %>% 
+              ggplot()+
+              geom_path(aes(x = who_data1, 
+                 y = value, 
+                 group = district, 
+                 color = district), 
+                 linewidth = 1.2)+
+              geom_point(aes(x = who_data1, 
+                 y = value, 
+                 group = district, 
+                 color = district), 
+                 size = 2.3)+
+              scale_color_manual(values = pal)+
+                 theme_minimal()+
+              labs(x = "WHO Algorithm Data", 
+                   y = "Value (%)", 
+                   title = b)+
+                 theme(legend.position = "none")+
+                 coord_cartesian(ylim = c(0,100))})
+  )
+
+a <- all_slopes %>% 
+  map(., ~cowplot::plot_grid(.x[[3]], 
+                                      .x[[4]], 
+                                      .x[[2]], 
+                                      .x[[1]]))
+
+
+map2(a, names(a),
+     ~ggsave(plot = .x, filename = paste0(here::here("pdf_report", 
+                                                    "district_performance"),
+                                          "/",
+                                                    .y, 
+                                                    ".png"
+                                                    )))
+
+```
+
+
+```{r eval = FALSE}
+# this appears to be duplicated from above. Double check and delete if so
+######################################
+district_metrics <- district_alerts_all %>% 
+  map(~.x %>% 
+  select(year_week, 
+         district = district_for_shehia, 
+         year, 
+         week = week.x, 
+         alert_2sd, 
+         alert_75, 
+         alert_csum, 
+         real_outbreak) %>% 
+  group_by(district) %>% 
+  mutate(first_week = case_when(real_outbreak == "yes" & lag(real_outbreak) == "no" ~ "yes", 
+                                real_outbreak == "yes" & lag(real_outbreak) == "yes" ~ "no", 
+                                real_outbreak == "no" ~ NA_character_, 
+                                is.na(real_outbreak) ~ NA_character_,
+                                .default = "error"), 
+         last_week = case_when(real_outbreak == "yes" & lead(real_outbreak) == "no" ~ "yes", 
+                                real_outbreak == "yes" & lead(real_outbreak) == "yes" ~ "no", 
+                                real_outbreak == "no" ~ NA_character_, 
+                                is.na(real_outbreak) ~ NA_character_,
+                                .default = "error")) %>% 
+  ungroup()
+  )
+
+district_metrics <- district_alerts_all %>%
+  map(~.x %>% 
+  select(year_week, 
+         district = district_for_shehia, 
+         year, 
+         week = week.x, 
+         alert_2sd, 
+         alert_75, 
+         alert_csum, 
+         real_outbreak) %>% 
+  group_by(district) %>% 
+  mutate(first_week = case_when(real_outbreak == "yes" & lag(real_outbreak) == "no" ~ "yes", 
+                                .default = NA),
+         first_week_id = case_when(real_outbreak == "yes" & lag(real_outbreak) == "no" ~ year_week, 
+                                .default = NA)) %>%
+  ungroup() %>% 
+  group_by(district, real_outbreak) %>% 
+  fill(first_week_id) %>% 
+  ungroup() %>% 
+  pivot_longer(-c(year_week, district, year, week, real_outbreak, first_week, first_week_id)) %>% 
+  mutate(performance = case_when(is.na(value) ~ NA_character_,
+            value == "alert" & real_outbreak == "no" ~ "false_positive", 
+            value == "alert" & real_outbreak == "yes" ~ "true_positive", 
+            value == "non_alert" & real_outbreak == "no" ~ "true_negative", 
+            value == "non_alert" & real_outbreak == "yes" ~ "false_negative", 
+            .default = "error")) %>% 
+  mutate(algo = paste0("who_", word(name, 2, sep = "_")), 
+         name = "alert") %>% 
+  split(.$algo) %>% 
+  map(~.x %>% 
+  #pivot_wider(names_from = name, values_from = c(value, performance)) %>% 
+ group_by(district, first_week_id) %>% 
+  mutate(ever_detected = ifelse(real_outbreak == "yes", list(performance), NA)) %>% 
+   ungroup() %>% 
+   rowwise() %>% 
+   mutate(ever_detected1 = "true_positive" %in% ever_detected) %>% 
+   ungroup()
+ ) 
+  )
+
+
+
+district_metrics_event <- district_metrics %>% 
+  map(~.x %>% 
+  map(~.x %>% 
+        filter(first_week == "yes") %>% 
+        group_by(district) %>% 
+        summarise(num_outbreak = n(), 
+                  prob_first_week = paste0(sum(performance == "true_positive", na.rm = TRUE), 
+                                               "/", 
+                                               n(), 
+                                               " (", 
+                                               round(100*sum(performance == "true_positive", na.rm = TRUE)/n(), 1),
+                                               "%)"),
+                  prob_ever_detected = paste0(sum(ever_detected1 == TRUE), 
+                                              "/", 
+                                              n(), 
+                                              " (", 
+                                              round(100*sum(ever_detected1 == TRUE)/n(),1), 
+                                              "%)")) %>% 
+        ungroup()
+      )
+  )
+
+totals <- district_metrics %>% 
+  map(~.x %>% 
+  map(~.x %>% 
+  group_by(district, real_outbreak, performance) %>% 
+  summarise(count = n()) %>% 
+    ungroup() %>% 
+  pivot_wider(names_from = c(real_outbreak, performance), 
+              values_from = count) %>% 
+    mutate(across(c(2:7), ~replace_na(.x, 0)), 
+           district = str_to_title(str_replace_all(district, "_", " "))) %>% 
+    relocate(district, 
+             yes_true_positive, 
+             yes_false_negative, 
+             yes_NA, 
+             no_true_negative, 
+             no_false_positive, 
+             no_NA) %>% 
+    flextable::flextable() %>% 
+    flextable::set_header_labels(
+      district = "District",
+                       no_false_positive = "WHO Positive",
+                       no_true_negative = "WHO Negative", 
+                       no_NA = "WHO NA", 
+                       yes_false_negative = "WHO Negative", 
+                       yes_true_positive = "WHO Positive", 
+                       yes_NA = "WHO NA") %>% 
+      flextable::add_header_row(values = c("", "True Outbreak", "No Outbreak"), 
+                                colwidths = c(1,3,3)) %>% 
+    flextable::bg(j=c(2:4), bg = "#EFEFEF", part = "all")
+  )
+  )
+
+
+
+district_metrics_week <- district_metrics %>% 
+  map(~.x %>% 
+  map(~.x %>% 
+        filter(!is.na(real_outbreak)) %>% 
+  group_by(district) %>% 
+  summarise(weeks = sum(!is.na(real_outbreak)), 
+            weeks_outbreak = sum(real_outbreak == "yes", na.rm = TRUE), 
+            weeks_routine = sum(real_outbreak == "no", na.rm = TRUE), 
+            n_outbreak = sum(first_week=="yes", na.rm = TRUE),
+            no_call = paste0(sum(is.na(performance) & real_outbreak == "no"), 
+                                 "/", 
+                                 sum(real_outbreak == "no"), 
+                                 " (",
+                                 round(100*sum(is.na(performance) & real_outbreak == "no")/sum(real_outbreak == "no"), 1), 
+                                 "%)"),
+            no_call_outbreak = paste0(sum(is.na(performance) & real_outbreak == "yes"), 
+                                 "/", 
+                                 sum(real_outbreak == "yes"), 
+                                 " (",
+                                 round(100*sum(is.na(performance) & real_outbreak == "yes")/sum(real_outbreak == "yes"), 1), 
+                                 "%)"),
+            false_pos = paste0(sum(performance == "false_positive", na.rm = TRUE),
+                               "/", 
+                               weeks_routine,
+                               " (", 
+                               round(100*sum(performance == "false_positive", 
+                                                   na.rm = TRUE)/weeks_routine, 1), 
+                               "%)"),
+            sens = paste0(sum(performance == "true_positive", na.rm = TRUE),
+                          "/",
+                          weeks_outbreak, 
+                          " (",
+                          round(100*sum(performance == "true_positive", 
+                                        na.rm = TRUE)/weeks_outbreak, 1),
+                          "%)"),
+            spec = paste0(sum(performance == "true_negative", na.rm = TRUE), 
+                          "/", weeks_routine,
+                          " (", 
+                          round(100*sum(performance == "true_negative", 
+                                        na.rm = TRUE)/weeks_routine, 1),
+                          "%)"),
+            ppv = paste0(sum(performance == "true_positive", na.rm = TRUE), 
+                         "/", 
+                         sum(performance == "true_positive", 
+                              na.rm = TRUE)+  sum(performance == "false_positive", 
+                                                  na.rm = TRUE), 
+                         " (", 
+                         round(100*sum(performance == "true_positive", na.rm = TRUE)/ 
+                         (sum(performance == "true_positive", 
+                              na.rm = TRUE)+  sum(performance == "false_positive", 
+                                                  na.rm = TRUE)),1),
+                         "%)"),
+            npv = paste0(sum(performance == "true_negative", na.rm = TRUE), 
+                         "/", 
+                         sum(performance == "true_negative", 
+                             na.rm = TRUE)+ 
+                           sum(performance == "false_negative", 
+                               na.rm = TRUE), 
+                         " (", 
+                         round(100*sum(performance == "true_negative", na.rm = TRUE)/ 
+                         (sum(performance == "true_negative", 
+                             na.rm = TRUE)+ 
+                           sum(performance == "false_negative", 
+                               na.rm = TRUE)), 1),
+                         "%)"
+  )) %>% 
+    ungroup())
+)
+
+
+district_metrics <- map2(district_metrics_week, district_metrics_event,
+                         function(a,b)map2(a,b, ~left_join(.x,.y, 
+                                                           by = "district")))
+
+
+
+```
+
+```{r}
+metric_table <- district_metrics %>% 
+  map(~.x %>% 
+        map(~.x %>% 
+              select(-num_outbreak) %>% 
+                      mutate(district = str_to_title(str_replace_all(district, "_", " "))) %>% 
+                      rename_with(.cols = everything(), 
+                                  ~str_to_title(str_replace_all(.x, "_", " "))) %>% 
+                      select(-Weeks) %>% 
+                      relocate(District, 
+                               `N Outbreak`, 
+                               `Prob Ever Detected`,
+                               `Prob First Week`,
+                               `Weeks Outbreak`,
+                               Sens, 
+                               Ppv, 
+                               `No Call Outbreak`,
+                               `Weeks Routine`,
+                               Spec, 
+                               Npv, 
+                               `False Pos`, 
+                               `No Call`
+                               ) %>%
+                     flextable::flextable() %>% 
+                     flextable::set_header_labels(`N Outbreak` = "Number Outbreaks",
+                       `False Pos` = "True Routine Weeks Flagged",
+                       Sens = "Epiweek Sensitivity", 
+                       Spec = "Epiweek Specificity", 
+                       Ppv = "Epiweek Positive Predictive Value", 
+                       Npv = "Epiweek Negative Predictive Value", 
+                       `Prob First Week` = "True Outbreaks Detected First Week",
+                       `Prob Ever Detected` = "True Outbreak Detected at Least One Week", 
+                       `No Call` = "WHO Algorithm Gave No Categorization -- Routine*",
+                       `No Call Outbreak` = "WHO Algorithm Gave No Categorization -- Outbreak*"
+)
+)
+)
+
+
+```
+
+
+
+## Historical mean + 2 standard deviations {.tabset}
+### Input data {.tabset .tabset-pills}
+#### Raw, all
+##### Metrics
+```{r}
+metric_table[[1]][[1]]
+```
+
+##### Raw Counts
+```{r}
+totals[[1]][[1]]
+```
+
+#### Subset, all
+##### Metrics
+```{r}
+metric_table[[2]][[1]]
+```
+
+##### Raw Counts
+```{r}
+totals[[2]][[1]]
+```
+
+#### Raw, local only
+##### Metrics
+```{r}
+metric_table[[3]][[1]]
+```
+
+##### Raw Counts
+```{r}
+totals[[3]][[1]]
+```
+
+#### Subset, local only
+##### Metrics
+```{r}
+metric_table[[4]][[1]]
+```
+
+##### Raw Counts
+```{r}
+totals[[4]][[1]]
+```
+
+## 75th percentile of historical counts {.tabset}
+Applied when threshold surpassed at least two consecutive weeks
+
+### Input data {.tabset .tabset-pills}
+#### Raw, all
+##### Metrics
+```{r}
+metric_table[[1]][[4]]
+```
+
+##### Raw Counts
+```{r}
+totals[[1]][[4]]
+```
+
+#### Subset, all
+##### Metrics
+```{r}
+metric_table[[2]][[4]]
+```
+
+##### Raw Counts
+```{r}
+totals[[2]][[4]]
+```
+
+#### Raw, local only
+##### Metrics
+```{r}
+metric_table[[3]][[4]]
+```
+
+##### Raw Counts
+```{r}
+totals[[3]][[4]]
+```
+
+#### Subset, local only
+##### Metrics
+```{r}
+metric_table[[4]][[4]]
+```
+
+##### Raw Counts
+```{r}
+totals[[4]][[4]]
+```
+
+## C-SUM {.tabset}
+### Input data {.tabset .tabset-pills}
+#### Raw, all
+##### Metrics
+```{r}
+metric_table[[1]][[5]]
+```
+
+##### Raw Counts
+```{r}
+totals[[1]][[5]]
+```
+
+#### Subset, all
+##### Metrics
+```{r}
+metric_table[[2]][[5]]
+```
+
+##### Raw Counts
+```{r}
+totals[[2]][[5]]
+```
+
+#### Raw, local only
+##### Metrics
+```{r}
+metric_table[[3]][[5]]
+```
+
+##### Raw Counts
+```{r}
+totals[[3]][[5]]
+```
+
+#### Subset, local only
+##### Metrics
+```{r}
+metric_table[[4]][[5]]
+```
+
+##### Raw Counts
+```{r}
+totals[[4]][[5]]
+```
+
+
+
+# Weekly performance at district level {.tabset .tabset-pills}
+
+```{r, echo=FALSE, out.width="25%", fig.cap="Legend for weekly charts"}
+knitr::include_graphics("weekly_performance_legeng.png")
+```
+
+
+## Chakechake
+```{r }
+# plots_a <- district_alerts_raw %>% 
+#   select(year_week, district_for_shehia, n,
+#          alert_2sd, 
+#          alert_75, 
+#          alert_csum, 
+#          real_outbreak) %>% 
+#   group_by(alert_2sd, 
+#          alert_75, 
+#          alert_csum) %>% 
+#   mutate(fill = cur_group_id())
+
+plots_a <- district_alerts_all %>%
+  map(~.x %>% 
+  select(year_week, district_for_shehia, n,
+         alert_2sd, 
+         alert_75 = alert_75_prime,   # gives output when two or more consecutive weeks flag
+         alert_csum, 
+         real_outbreak) %>% 
+  group_by(alert_2sd, 
+         alert_75, 
+         alert_csum) %>% 
+  mutate(fill = cur_group_id())
+        )
+  
+```
+
+
+```{r, eval = FALSE}
+fill_ids <- plots_a %>% 
+  distinct(fill, .keep_all = T) %>% 
+  arrange(fill) %>% 
+  ungroup() %>% 
+  mutate(fill_id = case_match(fill, 
+                              1~ "black", 
+                              2~     "tomato4", 
+                              3~     "orange4", #3
+                              4~     "cadetblue4", 
+                              5~     "darkolivegreen", 
+                              6~     "white", #6
+                              7~     "grey25", 
+                              8~     "cornsilk4", 
+                              9~     "grey70", #9
+                              10~     "#FFFFFF00")) %>% 
+  select(c(4:6, 9)) %>% 
+  mutate(fill = rep(NA, nrow(fill_ids)), 
+         across(c(1:3), ~str_to_title(str_replace_all(.x, "_", " ")))) %>% 
+  relocate(fill) %>% 
+  rename_with(~str_to_title(str_replace_all(.x, "_", " ")), 
+              .cols = everything())
+  
+
+a <- flextable::flextable(select(fill_ids, -`Fill Id`)) %>% 
+  flextable::set_header_labels(values = list(
+    `Alert 2sd` = "Alert 2SD",
+    `Alert Csum` = "Alert C-SUM")) %>% 
+  flextable::align(align = "center", part = "header") %>% 
+  flextable::bg(j= 1, bg = c(fill_ids$`Fill Id`))
+
+flextable::save_as_image(a, path = here::here("weekly_performance_legeng.png"), 
+                         res = 500)
+
+```
+
+
+
+```{r eval = FALSE}
+  
+plots <- plots_a %>% 
+  ungroup() %>% 
+  mutate(fill_id = case_match(fill, 
+                              1~ "black", 
+                              2~     "tomato4", 
+                              3~     "orange4", #3
+                              4~     "cadetblue4", 
+                              5~     "darkolivegreen", 
+                              6~     "white", #6
+                              7~     "grey25", 
+                              8~     "cornsilk4", 
+                              9~     "grey70", #9
+                              10~     "#FFFFFF00")) %>% 
+  split(.$district_for_shehia) %>% 
+  map(function(z) {
+    a <- ggplot(z)+
+      geom_col(aes(x = year_week, y = n, fill = fill_id), color = "grey60")+
+      scale_fill_identity()+
+      theme_minimal()+
+      labs(x = element_blank(), 
+           y = "Reported cases")+
+      theme(axis.title.x=element_blank(),
+                   axis.text.x=element_blank(),
+                   axis.ticks.x=element_blank())
+    
+    b <-  ggplot(z)+
+      geom_tile(aes(x = year_week, y = 1, fill = real_outbreak))+
+      theme_void()+
+      scale_fill_manual(values = c("white", "black"))+
+      labs(x = "Epiweek")+
+      theme(axis.title.y=element_blank(),
+                   axis.text.y=element_blank(),
+                   axis.ticks.y=element_blank(), 
+            legend.position = "none")
+    
+    cowplot::plot_grid(a,NULL, b, ncol = 1, rel_heights = c(1, -0.07, 0.2) , 
+                       align = "hv", 
+                       axis = "tblr")
+  } 
+        )
+#   gives order for plots in list ...names(plots)
+plots[[1]]
+```
+
+```{r}
+
+# duplicated version for  
+
+#   teset <- a %>% filter(start_real == "yes") %>% 
+#      mutate(year_week = as.character(year_week))
+
+a <- list_rbind(plots_a, names_to = "comp") %>% 
+  select(-fill) %>% 
+  group_by(comp, district_for_shehia) %>% 
+  mutate(start_real = case_when(real_outbreak == "yes" & lag(real_outbreak)== "no"~"yes", 
+                                real_outbreak == "yes" & lag(real_outbreak)== "yes"~"no", 
+                                real_outbreak == "no" ~ NA_character_, 
+                                .default = "error"), 
+         stop_real = case_when(real_outbreak == "yes" & lead(real_outbreak)== "no" ~"yes", 
+                                real_outbreak == "yes" & lead(real_outbreak)== "yes"~"no", 
+                                real_outbreak == "no" ~ NA_character_, 
+                                .default = "error")) %>% 
+  ungroup() %>% 
+  mutate(stop_real1 = case_when(stop_real == "error" & as.character(year_week) == "2024 W37" ~ "yes", 
+                                stop_real == "error" & is.na(lead(comp)) ~ "yes", 
+                                .default = stop_real)) %>% 
+  pivot_longer(cols = starts_with("alert")) %>% 
+  split(.$district_for_shehia) %>% 
+  map(~.x %>% 
+        split(.$name))
+
+
+
+      
+b <- a %>% 
+  map(~.x %>% 
+        map(~.x %>% 
+              filter(start_real == "yes") %>% 
+              pull(year_week) %>% 
+              as_tibble() %>% 
+              mutate(value = as.Date(value) - lubridate::ddays(3))
+            )
+      )
+
+c <- a %>% 
+  map(~.x %>% 
+        map(~.x %>% 
+              filter(stop_real1 == "yes") %>% 
+              pull(year_week) %>% 
+              as_tibble()%>% 
+              mutate(value = as.Date(value) + lubridate::ddays(4))
+            )
+      )
+
+d <- a %>% 
+  map(~.x %>% 
+        map(~.x %>% 
+              filter(stop_real1 == "yes") %>% 
+              pull(comp) %>% 
+              as_tibble()
+            )
+      )
+
+recs <- map2(b,c,
+             function(x,y)map2(x,y, function(w,z) bind_cols(w,z)))
+
+recs1 <- map2(recs,d,
+             function(x,y)map2(x,y, function(w,z) bind_cols(w,z) %>% 
+                                 rename(start = 1, 
+                                        stop = 2, 
+                                        data = 3)))
+
+weekly_figs <- map2(a, recs1, function(x,y)map2(x,y, function(w,z){
+  plot1 <- ggplot()+
+      geom_rect(data=filter(z, data == "raw"), aes(ymin=0, ymax=Inf, 
+                                                 xmin=start, xmax=stop), 
+              fill = "firebrick4",
+              alpha =0.4) +
+      geom_col(data = filter(w, comp == "raw"), 
+               aes(x = year_week, y = n, fill = value), 
+               color = "grey60")+
+    
+      scale_fill_manual(values = c("firebrick4", "white", "grey"))+
+      theme_minimal()+
+      labs(x = element_blank(), 
+           y = "Reported cases")+
+      theme(axis.title.x=element_blank(),
+                   axis.text.x=element_blank(),
+                   axis.ticks.x=element_blank(),
+            legend.position="none")
+  
+  plot2 <- ggplot()+
+      geom_rect(data=filter(z, data == "local-raw"), aes(ymin=0, ymax=Inf, 
+                                                 xmin=start, xmax=stop), 
+              fill = "firebrick4",
+              alpha =0.4) +
+      geom_col(data = filter(w, comp == "local-raw"), 
+               aes(x = year_week, y = n, fill = value), 
+               color = "grey60")+
+    
+      scale_fill_manual(values = c("firebrick4", "white", "grey"))+
+      theme_minimal()+
+      labs(x = element_blank(), 
+           y = element_blank())+
+      theme(axis.title.x=element_blank(),
+            axis.text.x=element_blank(),
+            axis.ticks.x=element_blank(),
+            legend.position="none")
+  
+  plot3 <- ggplot()+
+      geom_rect(data=filter(z, data == "filter"), aes(ymin=0, ymax=Inf, 
+                                                 xmin=start, xmax=stop), 
+              fill = "firebrick4",
+              alpha =0.4) +
+      geom_col(data = filter(w, comp == "filter"), 
+               aes(x = year_week, y = n, fill = value), 
+               color = "grey60")+
+    
+      scale_fill_manual(values = c("firebrick4", "white", "grey"))+
+      theme_minimal()+
+      labs(x = "Epidemiological Week", 
+           y = "Reported cases")+
+      theme(legend.position="none")
+  
+  plot4 <- ggplot()+
+      geom_rect(data=filter(z, data == "local-filter"), aes(ymin=0, ymax=Inf, 
+                                                 xmin=start, xmax=stop), 
+              fill = "firebrick4",
+              alpha =0.4) +
+      geom_col(data = filter(w, comp == "local-filter"), 
+               aes(x = year_week, y = n, fill = value), 
+               color = "grey60")+
+    
+      scale_fill_manual(values = c("firebrick4", "white", "grey"))+
+      theme_minimal()+
+      labs(x = "Epidemiological Week", 
+           y = element_blank())+
+      theme(legend.position="none")
+
+  cowplot::plot_grid(plot1, plot2, NULL, NULL, plot3, plot4, 
+                     labels = c("A", "C", NULL, NULL, "B", "D"),
+                     ncol = 2,
+                     rel_heights = c(1, -0.1, 1),
+                     align = "hv",
+                     axis = "tblr")
+
+}))
+
+
+
+fig_name <- weekly_figs %>% 
+  map(~.x %>% 
+        names())
+
+folder <- names(weekly_figs)
+
+pmap(list(weekly_figs, fig_name, folder),
+     function(a,b,c)map2(a,b, function(x,y){ggsave(plot = x, 
+                                    filename = paste0(here::here("pdf_report", 
+                                                                 "algo_district_performance", 
+                                                                 c), 
+                                                                 "/", 
+                                                                 y, ".png"),
+                                    width = 9, 
+                                    height = 7.2, 
+                                    units = "in")}))
+
+
+```
+
+### Mean + 2SD
+```{r}
+weekly_figs[[1]][[1]]
+```
+
+### 75th percentile
+```{r}
+weekly_figs[[1]][[2]]
+```
+
+### C-SUM
+```{r}
+weekly_figs[[1]][[3]]
+```
+
+## Kaskazini A
+
+### Mean + 2SD
+```{r}
+weekly_figs[[2]][[1]]
+```
+
+### 75th percentile
+```{r}
+weekly_figs[[2]][[2]]
+```
+
+### C-SUM
+```{r}
+weekly_figs[[2]][[3]]
+```
+
+## Kaskazini B
+
+### Mean + 2SD
+```{r}
+weekly_figs[[3]][[1]]
+```
+
+### 75th percentile
+```{r}
+weekly_figs[[3]][[2]]
+```
+
+### C-SUM
+```{r}
+weekly_figs[[3]][[3]]
+```
+```{r}
+weekly_figs[[3]]
+```
+
+## Kati
+
+### Mean + 2SD
+```{r}
+weekly_figs[[4]][[1]]
+```
+
+### 75th percentile
+```{r}
+weekly_figs[[4]][[2]]
+```
+
+### C-SUM
+```{r}
+weekly_figs[[4]][[3]]
+```
+
+## Kusini
+
+### Mean + 2SD
+```{r}
+weekly_figs[[5]][[1]]
+```
+
+### 75th percentile
+```{r}
+weekly_figs[[5]][[2]]
+```
+
+### C-SUM
+```{r}
+weekly_figs[[5]][[3]]
+```
+
+## Magharibi A
+
+### Mean + 2SD
+```{r}
+weekly_figs[[6]][[1]]
+```
+
+### 75th percentile
+```{r}
+weekly_figs[[6]][[2]]
+```
+
+### C-SUM
+```{r}
+weekly_figs[[6]][[3]]
+```
+
+## Magharibi B
+
+### Mean + 2SD
+```{r}
+weekly_figs[[7]][[1]]
+```
+
+### 75th percentile
+```{r}
+weekly_figs[[7]][[2]]
+```
+
+### C-SUM
+```{r}
+weekly_figs[[7]][[3]]
+```
+
+## Micheweni
+
+### Mean + 2SD
+```{r}
+weekly_figs[[8]][[1]]
+```
+
+### 75th percentile
+```{r}
+weekly_figs[[8]][[2]]
+```
+
+### C-SUM
+```{r}
+weekly_figs[[8]][[3]]
+```
+
+## Mjini
+
+### Mean + 2SD
+```{r}
+weekly_figs[[9]][[1]]
+```
+
+### 75th percentile
+```{r}
+weekly_figs[[9]][[2]]
+```
+
+### C-SUM
+```{r}
+weekly_figs[[9]][[3]]
+```
+
+
+## Mkoani
+
+### Mean + 2SD
+```{r}
+weekly_figs[[10]][[1]]
+```
+
+### 75th percentile
+```{r}
+weekly_figs[[10]][[2]]
+```
+
+### C-SUM
+```{r}
+weekly_figs[[10]][[3]]
+```
+
+
+## Wete
+
+### Mean + 2SD
+```{r}
+weekly_figs[[11]][[1]]
+```
+
+### 75th percentile
+```{r}
+weekly_figs[[11]][[2]]
+```
+
+### C-SUM
+```{r}
+weekly_figs[[11]][[3]]
+```
+
+```{r include = FALSE}
+rm(weekly_figs)
+```
+
+
+# Shehia-level performance table {.tabset}
+
+Tables provided are filterable and downloadable as they are quite large at the shehia level.
+```{r }
+
+data_agg_shehia <- map(list(data_raw, 
+                            data_filtered, 
+                            data_raw_local, 
+                            data_filtered_local), 
+                       ~.x %>% 
+  mutate(year_week = yearweek(date_fix)) %>% 
+  count(year_week, district_for_shehia, shehia, .drop = FALSE) %>%   
+  complete(year_week, district_for_shehia, shehia, fill = list(n = 0)) %>% 
+  mutate(dis_she_combo = paste0(district_for_shehia, "-", shehia)) %>% 
+  filter(dis_she_combo %in% shehia_constant_thresholds$dis_she_combo) %>%  
+  tsibble(key = c(district_for_shehia, shehia), index = year_week) %>% 
+  mutate(year = epiyear(year_week), 
+         week = isoweek(year_week)) %>% 
+  ungroup()
+)
+
+# data_agg_shehia_test <- map(list(data_raw, 
+#                             data_filtered, 
+#                             data_raw_local, 
+#                             data_filtered_local), 
+#                        ~.x %>% 
+#   mutate(year_week = yearweek(date_fix),
+#          dis_she_combo = paste0(district_for_shehia, "-", shehia)) %>% 
+#   count(year_week, dis_she_combo, .drop = FALSE) %>%   
+#   complete(year_week, dis_she_combo, fill = list(n = 0)) %>% 
+#   filter(dis_she_combo %in% shehia_constant_thresholds$dis_she_combo) %>%  
+#   tsibble(key = dis_she_combo, index = year_week) %>% 
+#   mutate(year = epiyear(year_week), 
+#          week = epiweek(year_week)) %>% 
+#   ungroup()
+# )
+
+
+
+who_sd <- data_agg_shehia %>% 
+  map(~.x %>% 
+  arrange(district_for_shehia, shehia, week, year) %>% 
+  group_by(district_for_shehia, shehia, week) %>% 
+  mutate(n_lag = lag(n),
+         running_mean = runner::runner(n_lag, k = 5, f = function(x){mean(x, na.rm = TRUE)}), 
+         running_2sd = runner::runner(n_lag, k = 5, f = function(x){2*sd(x, na.rm = TRUE)})) %>% 
+  ungroup() %>% 
+  mutate(n_prime = ifelse(n > running_mean + running_2sd, NA_real_, n)) %>% 
+  group_by(district_for_shehia, shehia, week) %>% 
+  mutate(running_mean_prime = runner::runner(n_prime, k = 5, f = function(x){mean(x, na.rm = TRUE)}), 
+         running_2sd_prime = runner::runner(n_prime, k = 5, f = function(x){2*sd(x, na.rm = TRUE)})) %>% 
+  ungroup() %>% 
+  mutate(alert_2sd = case_when(n > running_mean_prime + running_2sd_prime ~ "alert", 
+                            n <= running_mean_prime + running_2sd_prime ~ "non_alert", 
+                            is.na(running_mean_prime) | is.na(running_2sd_prime) ~ NA_character_, 
+                            .default = "error"), 
+         threshold_2sd = running_mean_prime + running_2sd_prime
+         ) %>% 
+  select(district_for_shehia, shehia, year_week, alert_2sd, threshold_2sd)
+  )
+
+
+         
+
+# who 75 percentile method
+# both exceedence of threshold itself and requirement for two consecutive weeks calculated
+who_75 <- data_agg_shehia %>% 
+  map(~.x %>% 
+  arrange(district_for_shehia, shehia, week, year) %>% 
+  group_by(district_for_shehia, shehia, week) %>% 
+  mutate(n_lag = lag(n),
+         threshold = runner::runner(n_lag, k = 5, f = function(x){quantile(x, probs = 0.75, 
+                                                        na.rm = TRUE)})) %>%
+  ungroup() %>% 
+  mutate(alert_75 = case_when(n > threshold ~ "alert",
+                              n <= threshold ~ "non_alert", 
+                              is.na(threshold) ~ NA_character_,
+                              .default = "error")) %>% 
+  arrange(district_for_shehia, year, week) %>% 
+  group_by(district_for_shehia, shehia) %>% 
+  mutate(alert_75_prime = case_when(alert_75 == "non_alert" ~ "non_alert",
+                                    is.na(alert_75) ~ NA_character_,
+                                    alert_75 == "alert" & (lag(alert_75) == "alert" | lead(alert_75) == "alert") ~ "alert", 
+                                    alert_75 == "alert" & lag(alert_75) == "non_alert" & lead(alert_75) == "non_alert" ~ "non_alert", 
+                                    .default = "error")) %>% 
+                ungroup() %>% 
+  select(district_for_shehia, shehia, year_week,
+         threshold_75 = threshold, alert_75, alert_75_prime)
+  )
+
+
+# who_csum
+
+who_csum <- data_agg_shehia %>% 
+  map(~.x %>% 
+  group_by(district_for_shehia, shehia) %>% 
+  mutate(back = lag(week), 
+         back_year = lag(year), 
+         back_n = lag(n), 
+         forward = lead(week), 
+         forward_year = lead(year), 
+         forward_n = lead(n)) %>% 
+  ungroup() %>% 
+  arrange(district_for_shehia, shehia, week, year) %>% 
+  rowwise() %>% 
+  mutate(window_counts_current = list(c(back_n, n, forward_n))) %>% 
+  ungroup() %>% 
+  select(-c(back, back_year, back_n, forward, forward_year, forward_n)) %>% 
+  mutate(window_counts_prev = case_when(year == 2019 ~ NA, 
+                                        .default = lag(window_counts_current))) %>% 
+  group_by(district_for_shehia, shehia,week) %>% 
+  mutate(cum_years = map(seq_along(year), ~list_c(window_counts_prev[max(1, .x-4):.x])), 
+         threshold_csum =  map_dbl(cum_years, 
+                                   ~sum(.x, na.rm = TRUE))/length(cum_years)) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(threshold_csum = case_when(is_empty(cum_years) | length(cum_years) <= 6 ~ NA_real_, 
+                                 .default = threshold_csum)) %>% 
+  ungroup() %>% 
+  mutate(alert_csum = case_when(n > threshold_csum ~ "alert", 
+                          n <= threshold_csum ~ "non_alert", 
+                          is.na(threshold_csum) ~ NA_character_, 
+                          .default = "error")) %>% 
+  select(district_for_shehia, shehia, year_week, threshold_csum, alert_csum)
+  )
+
+## constant counts
+
+zamep_constant <- data_agg_shehia %>% 
+  map(~.x %>% 
+        left_join(shehia_constant_thresholds, by = c("district_for_shehia", 
+                                                     "shehia")) %>% 
+        group_by(district_for_shehia, shehia) %>% 
+
+        mutate(threshold_zamep_constant = case_when(n>=threshold ~ "alert", 
+                                                n < threshold ~ "non_alert", 
+                                                is.na(threshold) ~ NA_character_, 
+                                                .default = "error"), 
+               first_in_run = case_when(threshold_zamep_constant == "alert" & lag(threshold_zamep_constant) == "non_alert" ~ year_week, 
+                                  .default = NA)) %>% 
+        fill(first_in_run, .direction = "down") %>% 
+        ungroup() %>% 
+        mutate(first_in_run = as.Date(ifelse(threshold_zamep_constant == "alert", first_in_run, NA))) %>% 
+        group_by(district_for_shehia, shehia, first_in_run) %>% 
+        mutate(duration = ifelse(threshold_zamep_constant == "alert", n(), NA), 
+               alert_zamep = case_when(duration >=2 ~ "alert", 
+                                       duration <2 ~"non_alert", 
+                                       !is.na(n) ~ "non_alert", 
+                                       .default = "error")) %>%    
+        ungroup %>% 
+        select(district_for_shehia, shehia, year_week, threshold_zamep = threshold, 
+               alert_zamep)
+      )
+  
+       
+
+# combines all outbreak/no determinations by WHO/ZAMEP thresholds and combines with 
+# gold standards by Farrington in each shehia, each week, for four data sets (raw, filtered, etc)
+
+shehia_alerts_raw <- pmap(list(data_agg_shehia, who_sd, who_75, who_csum, 
+                               zamep_constant), 
+                         function(a,b,c,d,e)reduce(list(a,b,c,d,e),
+                              left_join,
+                                by = c("year_week", "district_for_shehia", 
+                                       "shehia"))%>%
+                           mutate(week1 = isoweek(year_week), 
+                                  year = epiyear(year_week)) %>% 
+                           as_tibble()
+                         ) %>% 
+  map2(list(as_tibble(national_alerts_shehia),as_tibble(national_alerts_shehia),
+            as_tibble(national_alerts_local_shehia),
+            as_tibble(national_alerts_local_shehia)), 
+       function(x,y)right_join(x,y,by = c("district_for_shehia" = "district", 
+                    "shehia" = "shehia",
+                    "week1", 
+                    "year")))
+
+
+
+district_metrics <- shehia_alerts_raw %>% 
+  map(~.x %>% 
+        select(-alert_75) %>% 
+  select(year_week, 
+         district = district_for_shehia, 
+         shehia,
+         year, 
+         week = week.x, 
+         alert_2sd, 
+         alert_75 = alert_75_prime, 
+         alert_csum, 
+         alert_zamep,
+         real_outbreak) %>% 
+  group_by(district, shehia) %>% 
+  mutate(first_week = case_when(real_outbreak == "yes" & lag(real_outbreak) == "no" ~ "yes", 
+                                .default = NA),
+         first_week_id = case_when(real_outbreak == "yes" & lag(real_outbreak) == "no" ~ year_week, 
+                                .default = NA)) %>%
+  fill(first_week_id, .direction = "down") %>% 
+  ungroup() %>% 
+    mutate(first_week_id = case_when(real_outbreak == "yes" ~ first_week_id, 
+                                     .default =  NA)) %>% 
+  pivot_longer(-c(year_week, district, shehia, year, week, real_outbreak, first_week, first_week_id)) %>% 
+  mutate(performance = case_when(is.na(value) ~ NA_character_,
+            value == "alert" & real_outbreak == "no" ~ "false_positive", 
+            value == "alert" & real_outbreak == "yes" ~ "true_positive", 
+            value == "non_alert" & real_outbreak == "no" ~ "true_negative", 
+            value == "non_alert" & real_outbreak == "yes" ~ "false_negative", 
+            .default = "error")) %>% 
+  mutate(algo = paste0("who_", word(name, 2, sep = "_")), 
+         name = "alert") %>% 
+  split(.$algo) %>% 
+  map(~.x %>% 
+ group_by(district, shehia, first_week_id) %>% 
+  mutate(ever_detected = ifelse(real_outbreak == "yes", list(performance), NA)) %>% 
+   ungroup() %>% 
+   rowwise() %>% 
+   mutate(ever_detected1 = "true_positive" %in% ever_detected) %>% 
+   ungroup()
+ ) 
+  ) %>% 
+  set_names("raw", "filter", "local-raw", "local-filter")
+
+
+
+
+district_metrics_event <- district_metrics %>% 
+  map(~.x %>% 
+  map(~.x %>% 
+        filter(first_week == "yes") %>% 
+        group_by(district, shehia) %>% 
+        summarise(num_outbreak = n(), 
+                  prob_first_week = round(100*sum(performance == "true_positive", na.rm = TRUE)/n(),1), 
+                  prob_ever_detected = round(100*sum(ever_detected1 == TRUE)/n(), 1)) %>% 
+        ungroup())
+  )
+  
+
+
+
+district_metrics_week <- district_metrics %>% 
+  map(~.x %>% 
+  map(~.x %>% 
+  group_by(district, shehia) %>% 
+  summarise(weeks = sum(!is.na(real_outbreak)), 
+            weeks_outbreak = sum(real_outbreak == "yes"), 
+            weeks_routine = sum(real_outbreak == "no"), 
+            n_outbreak = sum(first_week=="yes", na.rm = TRUE),
+            no_call = paste0(sum(is.na(performance) & real_outbreak == "no"), 
+                             "/",
+                             weeks_routine, 
+                             " (", 
+                             sum(is.na(performance) & real_outbreak == "no")/weeks_routine, 
+                             "%)"), 
+            no_call_outbreak = paste0(sum(is.na(performance) & real_outbreak == "yes"), 
+                             "/",
+                             weeks_outbreak, 
+                             " (", 
+                             round(100*sum(is.na(performance) & real_outbreak == "yes")/weeks_outbreak,1), 
+                             "%)"), 
+            false_pos = paste0(sum(performance == "false_positive", na.rm = TRUE), 
+                               "/", 
+                               weeks_routine,
+                               " (", 
+                               round(100*sum(performance == "false_positive", na.rm = TRUE)/weeks_routine, 1),
+                               "%)"),
+            sens = paste0(sum(performance == "true_positive", na.rm = TRUE), 
+                          "/", 
+                          weeks_outbreak,
+                          " (", 
+                          round(100*sum(performance == "true_positive", na.rm = TRUE)/weeks_outbreak, 1), 
+                          "%)"),
+            spec = paste0(sum(performance == "true_negative", na.rm = TRUE), 
+                          "/",
+                          weeks_routine, 
+                          " (", 
+                          round(100*sum(performance == "true_negative", na.rm = TRUE)/weeks_routine,1),
+                          "%)"),
+            ppv = paste0(sum(performance == "true_positive", na.rm = TRUE), 
+                         "/", 
+                         sum(performance == "true_positive", na.rm = TRUE)+
+                           sum(performance == "false_positive", na.rm = TRUE),
+                         " (", 
+                         round(100*sum(performance == "true_positive", na.rm = TRUE)/(sum(performance == "true_positive", na.rm = TRUE)+
+                                                             sum(performance == "false_positive", na.rm = TRUE)), 1),
+                         "%)"),
+            npv = paste0(sum(performance == "true_negative", na.rm = TRUE), 
+                         "/", 
+                         sum(performance == "true_negative", na.rm = TRUE)+
+                           sum(performance == "false_negative", na.rm = TRUE), 
+                         " )", 
+                         round(100*sum(performance == "true_negative", na.rm = TRUE)/(sum(performance == "true_negative", na.rm = TRUE)+
+                                                             sum(performance == "false_negative", na.rm = TRUE)), 1), 
+                         "%)")
+  ) %>% 
+    ungroup())
+  )
+
+# maintains data as numeric as opposed to character (for graphing)
+district_metrics_week_graph <- district_metrics %>% 
+  map(~.x %>% 
+  map(~.x %>% 
+  group_by(district, shehia) %>% 
+  summarise(weeks = sum(!is.na(real_outbreak)), 
+            weeks_outbreak = sum(real_outbreak == "yes"), 
+            weeks_routine = sum(real_outbreak == "no"), 
+            n_outbreak = sum(first_week=="yes", na.rm = TRUE),
+            no_call = round(100*sum(is.na(performance) & real_outbreak == "no")/weeks_routine,1),  
+            no_call_outbreak = round(100*sum(is.na(performance) & real_outbreak == "yes")/weeks_outbreak, 1),
+            false_pos = round(100*sum(performance == "false_positive", na.rm = TRUE)/weeks_routine, 1),
+            sens = round(100*sum(performance == "true_positive", na.rm = TRUE)/weeks_outbreak, 1), 
+            spec = round(100*sum(performance == "true_negative", na.rm = TRUE)/weeks_routine,1),
+            ppv = round(100*sum(performance == "true_positive", na.rm = TRUE)/(sum(performance == "true_positive", na.rm = TRUE)+
+                                                             sum(performance == "false_positive", na.rm = TRUE)), 1),
+            npv = round(100*sum(performance == "true_negative", na.rm = TRUE)/(sum(performance == "true_negative", na.rm = TRUE)+
+                                                             sum(performance == "false_negative", na.rm = TRUE)), 1)
+  ) %>% 
+    ungroup())
+  )
+
+shehia_metrics <- map2(district_metrics_week, district_metrics_event,
+                       function(a,b)map2(a,b,
+                         ~left_join(.x,.y, by = c("district", "shehia"))))
+
+#shehia_metrics <- map2(district_metrics_week, district_metrics_event,
+ #                        ~left_join(.x,.y, by = c("district", "shehia")))
+
+district_metrics_week_graph1 <- map2(district_metrics_week_graph, 
+                         names(district_metrics_week_graph), 
+                         function(a,b){map(a, ~.x %>% 
+                                             mutate(input_data = factor(b, levels = c("raw",  
+                                                      "filter", 
+                                                      "local-raw", 
+                                                      "local-filter"))))})
+
+shehia_metrics_graph <- map2(district_metrics_week_graph1, district_metrics_event,
+                            function(a,b)map2(a,b,
+                                              ~left_join(.x,.y, by = c("district",
+                                                                       "shehia")))
+)
+
+
+
+shehia_merge <- pmap(list(shehia_metrics_graph[[1]], 
+                  shehia_metrics_graph[[2]], 
+                  shehia_metrics_graph[[3]], 
+                  shehia_metrics_graph[[4]]), 
+             function(a,b,c,d)reduce(list(a,b,c, d), bind_rows)
+) %>% 
+  map(~.x %>% 
+        arrange(district, shehia, input_data))
+
+
+
+temp <- map(shehia_merge, ~.x %>%  
+  select(-c(weeks, weeks_outbreak, weeks_routine, n_outbreak, no_call,
+                no_call_outbreak, num_outbreak, false_pos)) %>% 
+    mutate(district = str_to_title(str_replace_all(district, "_", " ")), 
+           shehia = str_to_title(str_replace_all(shehia, "_", " "))) %>%
+    relocate(`Probability ever detected` = prob_ever_detected, .after = district) %>% 
+    relocate(`Probability detected first week` = prob_first_week, 
+           .after = `Probability ever detected`) %>% 
+    relocate(Sensitivity = sens, .after = `Probability detected first week`) %>% 
+    relocate(Specificity = spec, .after = Sensitivity) %>% 
+    relocate(shehia, .after = district) %>% 
+    rename(PPV = ppv, 
+           NPV = npv)
+  ) %>% 
+  list_rbind(names_to = "algo")
+
+rio::export(temp, file = paste0(here::here("pdf_report"), 
+                                "/shehia_metrics_all.xlsx"))
+
+```
+
+```{r}
+
+metric_table <- shehia_metrics_graph %>% 
+  map(~.x %>% 
+        map(~.x %>% 
+              select(-num_outbreak) %>% 
+                      mutate(district = str_to_title(str_replace_all(district, "_", " "))) %>% 
+                      rename_with(.cols = everything(), 
+                                  ~str_to_title(str_replace_all(.x, "_", " "))) %>% 
+                      select(-Weeks) %>% 
+                      relocate(District, 
+                               `N Outbreak`, 
+                               `Prob Ever Detected`,
+                               `Prob First Week`,
+                               `Weeks Outbreak`,
+                               Sens, 
+                               Ppv, 
+                               `No Call Outbreak`,
+                               `Weeks Routine`,
+                               Spec, 
+                               Npv, 
+                               `False Pos`, 
+                               `No Call`
+                               ) %>%
+                     flextable::flextable() %>% 
+                     flextable::set_header_labels(`N Outbreak` = "Number Outbreaks",
+                       `False Pos` = "True Routine Weeks Flagged",
+                       Sens = "Epiweek Sensitivity", 
+                       Spec = "Epiweek Specificity", 
+                       Ppv = "Epiweek Positive Predictive Value", 
+                       Npv = "Epiweek Negative Predictive Value", 
+                       `Prob First Week` = "True Outbreaks Detected First Week",
+                       `Prob Ever Detected` = "True Outbreak Detected at Least One Week", 
+                       `No Call` = "WHO Algorithm Gave No Categorization -- Routine*",
+                       `No Call Outbreak` = "WHO Algorithm Gave No Categorization -- Outbreak*"
+)
+)
+)
+
+shehia_histo <- shehia_metrics_graph %>% 
+  map(~.x %>% 
+        map(function(a) map2(list("prob_ever_detected",
+                                                        "prob_first_week",
+                                                        "sens",  
+                                                         "ppv", 
+                                                        "spec",
+                                                        "npv", 
+                                                        "false_pos"),
+                                            list("Sensitivity - Event", 
+                                                 "Probability detection first week",
+                                                 "Sensitivity - Epiweek",
+                                                 "PPV - Epiweek", 
+                                                 "Specificity - Epiweek", 
+                                                 "NPV - Epiweek", 
+                                                 "False alarm - Epiweek"),
+                                   function(b,c){var = sym(b)
+                                   graph <- ggplot(a)+
+                                      geom_histogram(aes(x={{var}}),
+                                                     binwidth = 5,
+                                                     color = "black")+
+                                     theme_minimal()+
+                                     coord_cartesian(xlim = c(0,100))+
+                                     labs(x = element_blank(), 
+                                          y = "Count", 
+                                          title = c)
+                                   return(graph)}))
+  )
+
+shehia_histo1 <- shehia_histo %>% 
+  map(~.x %>% 
+        map(function(a)cowplot::plot_grid(a[[1]], a[[2]], a[[3]], 
+                                          a[[4]], a[[5]], a[[6]], 
+                                          ncol = 2))) %>% 
+  set_names(c("raw", "filtered","raw_local","filtered_local")) %>% 
+  list_flatten(name_spec = "{outer}_{inner}") 
+
+map2(shehia_histo1, names(shehia_histo1), 
+     ~ggsave(plot = .x, 
+             filename = paste0(here::here("pdf_report", "shehia_histograms"), 
+                               "/", .y, ".png"), 
+             width = 7.2, 
+             height = 9, 
+             units = "in"))
+
+
+```
+
+
+
+## Historical mean + 2 standard deviations {.tabset .tabset-pills}
+
+### Raw data {.tabset .tabset-pills}
+
+#### Histograms
+```{r}
+shehia_histo1[[1]]
+```
+
+#### Table
+```{r}
+metric_table[[1]][[1]]
+```
+
+### Subset data{.tabset .tabset-pills}
+
+#### Histograms
+```{r}
+shehia_histo1[[5]]
+```
+
+#### Table
+```{r}
+metric_table[[2]][[1]]
+
+```
+
+### Raw data, local only {.tabset .tabset-pills}
+
+#### Histograms
+```{r}
+shehia_histo1[[9]]
+```
+
+#### Table
+```{r}
+metric_table[[3]][[1]]
+
+```
+
+### Subset data, local only {.tabset .tabset-pills}
+
+#### Histograms
+```{r}
+shehia_histo1[[13]]
+```
+
+#### Table
+```{r}
+metric_table[[4]][[1]]
+
+```
+
+
+
+## 75th percentile of historical counts {.tabset .tabset-pills}
+
+### Raw data {.tabset .tabset-pills}
+
+#### Histograms
+```{r}
+shehia_histo1[[2]]
+```
+
+#### Table
+```{r}
+metric_table[[1]][[2]]
+```
+
+### Subset data{.tabset .tabset-pills}
+
+#### Histograms
+```{r}
+shehia_histo1[[6]]
+```
+
+#### Table
+```{r}
+metric_table[[2]][[2]]
+
+```
+
+### Raw data, local only {.tabset .tabset-pills}
+
+#### Histograms
+```{r}
+shehia_histo1[[10]]
+```
+
+#### Table
+```{r}
+metric_table[[3]][[2]]
+
+```
+
+### Subset data, local only {.tabset .tabset-pills}
+
+#### Histograms
+```{r}
+shehia_histo1[[14]]
+```
+
+#### Table
+```{r}
+metric_table[[4]][[2]]
+
+```
+
+## C-SUM {.tabset .tabset-pills}
+
+### Raw data {.tabset .tabset-pills}
+
+#### Histograms
+```{r}
+shehia_histo1[[3]]
+```
+
+#### Table
+```{r}
+metric_table[[1]][[3]]
+```
+
+### Subset data{.tabset .tabset-pills}
+
+#### Histograms
+```{r}
+shehia_histo1[[7]]
+```
+
+#### Table
+```{r}
+metric_table[[2]][[3]]
+
+```
+
+### Raw data, local only {.tabset .tabset-pills}
+
+#### Histograms
+```{r}
+shehia_histo1[[11]]
+```
+
+#### Table
+```{r}
+metric_table[[3]][[3]]
+
+```
+
+### Subset data, local only {.tabset .tabset-pills}
+
+#### Histograms
+```{r}
+shehia_histo1[[15]]
+```
+
+#### Table
+```{r}
+metric_table[[4]][[3]]
+
+```
+
+## Constant operational thresholds {.tabset .tabset-pills}
+
+### Raw data {.tabset .tabset-pills}
+
+#### Histograms
+```{r}
+shehia_histo1[[4]]
+```
+
+#### Table
+```{r}
+metric_table[[1]][[4]]
+```
+
+### Subset data{.tabset .tabset-pills}
+
+#### Histograms
+```{r}
+shehia_histo1[[8]]
+```
+
+#### Table
+```{r}
+metric_table[[2]][[4]]
+
+```
+
+### Raw data, local only {.tabset .tabset-pills}
+
+#### Histograms
+```{r}
+shehia_histo1[[12]]
+```
+
+#### Table
+```{r}
+metric_table[[3]][[4]]
+
+```
+
+### Subset data, local only {.tabset .tabset-pills}
+
+#### Histograms
+```{r}
+shehia_histo1[[16]]
+```
+
+#### Table
+```{r}
+metric_table[[4]][[4]]
+
+```
+
+
+
+## Graphical comparisons of three methods
+
+### Overlaid Density Curves
+```{r results='hide',fig.keep='all'}
+
+test <-  map(shehia_metrics_graph, 
+             ~map2(list("prob_ever_detected",
+                   "prob_first_week",
+                   "sens",  
+                   "ppv", 
+                   "spec",
+                   "npv", 
+                   "false_pos"),
+              list("Sensitivity - Event", 
+                   "Probability detection first week",
+                   "Sensitivity - Epiweek",
+                   "PPV - Epiweek", 
+                   "Specificity - Epiweek", 
+                   "NPV - Epiweek", 
+                   "False alarm - Epiweek"),
+              function(b,c){var = sym(b)
+              graph <- ggplot()+
+                stat_density(data = .x[[1]],
+                             aes(x={{var}}),
+                             geom = "line",
+                             color = "orange4", 
+                             linewidth = 2, 
+                             alpha =0.6)+
+                stat_density(data = .x[[2]],
+                             aes(x={{var}}),
+                             geom = "line",      
+                             linewidth = 2,
+                             color = "cadetblue4", 
+                             alpha = 0.6)+
+                stat_density(data = .x[[3]],
+                             aes(x={{var}}),
+                             geom = "line",
+                             color = "darkolivegreen",
+                             linewidth = 2,
+                             alpha = 0.5)+
+                stat_density(data = .x[[4]],
+                             aes(x={{var}}),
+                             geom = "line",
+                             color = "grey35",
+                             linewidth = 2,
+                             alpha = 0.5)+
+                theme_minimal()+
+                coord_cartesian(xlim = c(0,100))+
+                labs(x = element_blank(), 
+                     y = "Density", 
+                     title = c)
+              return(graph)})
+)
+
+trial <- set_names(shehia_metrics_graph, 
+                   c("raw.all", "filtered.all", "raw.local", "filtered.local")) %>% 
+  list_flatten() %>% 
+  list_rbind(names_to = "set") %>% 
+  mutate(input_type = word(set, 1, sep = "_"), 
+         algo = word(set, -1, sep = "_"),
+         input_type1 = factor(word(input_type, 1, sep = "\\."), 
+                              levels = c("raw", "filtered")), 
+         input_type2 = factor(word(input_type, 2, sep = "\\."), 
+                              levels = c("all", "local"))
+         )
+
+test <-  map2(list("prob_ever_detected",
+                   "prob_first_week",
+                   "sens",  
+                   "ppv", 
+                   "spec",
+                   "npv", 
+                   "false_pos"),
+              list("Sensitivity - Event", 
+                   "Probability detection first week",
+                   "Sensitivity - Epiweek",
+                   "PPV - Epiweek", 
+                   "Specificity - Epiweek", 
+                   "NPV - Epiweek", 
+                   "False alarm - Epiweek"),
+              function(b,c){var = sym(b)
+                            graph <- ggplot()+
+                stat_density(data = trial,
+                             aes(x={{var}}, 
+                                 group = set, 
+                                 color = algo, 
+                                 linewidth = input_type1,
+                                 linetype = input_type2),
+                             geom = "line")+
+                              scale_color_manual(values = c("firebrick4", 
+                                                           "cadetblue2",
+                                                           "grey25", 
+                                                           "goldenrod4"))+
+                              scale_linewidth_manual(values = c(1, 0.5))+
+                theme_minimal()+
+                coord_cartesian(xlim = c(0,100))+
+                labs(x = element_blank(), 
+                     y = "Density", 
+                     title = c) +
+                theme(legend.position = "none")
+              return(graph)})
+
+pmap(list(test, list("prob_ever_detected",
+                   "prob_first_week",
+                   "sens",  
+                   "ppv", 
+                   "spec",
+                   "npv", 
+                   "false_pos"), 
+     list("1", "2", "3", "4", "5", "6", "7")),
+     function(a,b,c){ggsave(plot = a, 
+             filename = paste0(here::here("pdf_report", "shehia_density"), 
+                               "/",c, "_", b, ".png"), 
+             width = 9, 
+             height = 7.2, 
+             units = "in")})
+
+
+legend <- trial %>% 
+  mutate(input_type1 = case_match(input_type1, 
+         "raw" ~ "Full", 
+         "filtered" ~ "Subset"), 
+         input_type2 = case_match(input_type2, 
+         "all" ~ "All", 
+         "local" ~ "Local"), 
+         algo = case_match(algo, 
+         "2sd" ~ "Mean + 2SD", 
+         "75" ~ "75th percentile", 
+         "csum" ~ "C-SUM", 
+         "zamep" ~ "Constant")) %>% 
+  rename(`Data Input` = input_type1, 
+         `Case Classification` = input_type2, 
+         `Algorithm` = algo) %>% 
+         ggplot()+
+                stat_density(aes(x=prob_ever_detected, 
+                                 group = set, 
+                                 color = `Algorithm`, 
+                                 linewidth = `Data Input`,
+                                 linetype = `Case Classification`),
+                             geom = "line")+
+                              scale_color_manual(values = c("firebrick4", 
+                                                           "cadetblue2",
+                                                           "grey25", 
+                                                           "goldenrod4"))+
+                              scale_linewidth_manual(values = c(1, 0.5))+
+                theme_minimal()+
+                coord_cartesian(xlim = c(0,100))+
+                labs(x = element_blank(), 
+                     y = "Density") +
+  theme(legend.position = "top")
+
+a <- cowplot::get_legend(legend)
+ggsave(plot = cowplot::ggdraw(a), 
+       filename = "pdf_report/density_legend.png", 
+       width = 3, 
+       height = 3, 
+       units = "in")
+```
+
+### Overlaid Empirical Cumulative Distributions
+```{r results='hide',fig.keep='all'}
+
+test2 <-  map2(list("prob_ever_detected",
+                   "prob_first_week",
+                   "sens",  
+                   "ppv", 
+                   "spec",
+                   "npv", 
+                   "false_pos"),
+              list("Sensitivity - Event", 
+                   "Probability detection first week",
+                   "Sensitivity - Epiweek",
+                   "PPV - Epiweek", 
+                   "Specificity - Epiweek", 
+                   "NPV - Epiweek", 
+                   "False alarm - Epiweek"),
+              function(b,c){var = sym(b)
+                            graph <- ggplot()+
+                stat_ecdf(data = trial,
+                             aes(x={{var}}, 
+                                 group = set, 
+                                 color = algo, 
+                                 linewidth = input_type1,
+                                 linetype = input_type2),
+                             geom = "line")+
+                              scale_color_manual(values = c("firebrick4", 
+                                                           "cadetblue2",
+                                                           "grey25", 
+                                                           "goldenrod4"))+
+                              scale_linewidth_manual(values = c(1, 0.5))+
+                theme_minimal()+
+                coord_cartesian(xlim = c(0,100))+
+                labs(x = element_blank(), 
+                     y = "Density", 
+                     title = c) +
+                theme(legend.position = "none")
+              return(graph)})
+
+pmap(list(test2, list("prob_ever_detected",
+                   "prob_first_week",
+                   "sens",  
+                   "ppv", 
+                   "spec",
+                   "npv", 
+                   "false_pos"), 
+     list("1", "2", "3", "4", "5", "6", "7")),
+     function(a,b,c){ggsave(plot = a, 
+             filename = paste0(here::here("pdf_report", "shehia_cdf"), 
+                               "/",c, "_", b, ".png"), 
+             width = 9, 
+             height = 7.2, 
+             units = "in")})
+
+
+
+
+
+test2 <-  map(shehia_metrics_graph, ~map2(list("prob_ever_detected",
+                                                        "prob_first_week",
+                                                        "sens",  
+                                                         "ppv", 
+                                                        "spec",
+                                                        "npv", 
+                                                        "false_pos"),
+                                            list("Sensitivity - Event", 
+                                                 "Probability detection first week",
+                                                 "Sensitivity - Epiweek",
+                                                 "PPV - Epiweek", 
+                                                 "Specificity - Epiweek", 
+                                                 "NPV - Epiweek", 
+                                                 "False alarm - Epiweek"),
+                                   function(b,c){var = sym(b)
+                                   graph <- ggplot()+
+                                      stat_ecdf(data = .x[[1]],
+                                                     aes(x={{var}}),
+                                                     color = "orange4",
+                                                geom = "step", 
+                                                linewidth = 2, 
+                                                alpha = 0.7)+
+                                     stat_ecdf(data = .x[[2]],
+                                                     aes(x={{var}}),
+                                                     color = "cadetblue", 
+                                                geom = "step", 
+                                                linewidth = 2, 
+                                                alpha = 0.7)+
+                                     stat_ecdf(data = .x[[3]],
+                                                     aes(x={{var}}),
+                                                     color = "darkolivegreen", 
+                                                geom = "step", 
+                                                linewidth = 2, 
+                                                alpha = 0.7)+
+                                     stat_ecdf(data = .x[[4]],
+                                                     aes(x={{var}}),
+                                                     color = "grey35", 
+                                                geom = "step", 
+                                                linewidth = 2, 
+                                                alpha = 0.7)+
+                                     theme_minimal()+
+                                     coord_cartesian(xlim = c(0,100))+
+                                     labs(x = element_blank(), 
+                                          y = "Proportion of Shehia", 
+                                          title = c)
+                                   return(graph)})
+)
+
+# 
+```
+
+There are multiple graphics available in list for all input data types and
+all algorithms (different colors). Needs legend and expansion for final
+output.
+
+
+```{r results='hide',fig.keep='all'}
+
+test2[[1]]
+
+```
+
+
+
+# Conclusions
+```{r echo=FALSE}
+#rio::export(shehia_metrics_graph, "pdf_report/shehia_metrics_all.xlsx")
+```
+

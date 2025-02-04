@@ -1,0 +1,2381 @@
+---
+title: "Exploration of Zanzibar Routine Data"
+date: "`r format(Sys.time(), '%A %d %B %Y')`"
+#runtime: shiny
+output:
+  html_document:
+    code_folding: hide
+    code_download: true
+    highlight: zenburn
+    number_sections: yes
+    theme: spacelab
+    toc: yes
+    toc_collapse: no
+    toc_depth: 3
+    toc_float: yes
+    includes:
+      in_header: header.html
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Introduction
+Given the recent upsurge of reported malaria cases in Zanzibar, the upcoming 
+revision of the malaria surveillance guidelines, and the integration of 
+Zanzibar’s Malaria Case Notification (MCN) system into the electronic Integrated
+Disease Surveillance and Response (eIDSR) system on the DHIS2 platform, there is
+renewed interest to ensure that the routine malaria elimination surveillance 
+system is optimizing the algorithm used to detect malaria epidemics at various
+administrative levels (national, island, district, shehia, etc.) to inform 
+response efforts. There are several World Health Organization (WHO)-recommended 
+epidemic detection algorithms; however, the performance of these algorithms has
+not been assessed. The goal of this exercise is the evaluation of the 
+performance of various WHO-recommended epidemic detection algorithms, and 
+development of recommendations for integration of the best performing algorithm 
+into the malaria surveillance system in Zanzibar.
+
+## The analysis plan followed consisted of 4 steps.  
+
+1.	Independently confirm reported trends: In partnership with ZAMEP and IPs, 
+raw count data were gathered from the Zanzibar’s Coconut System and weekly eIDSR
+database.  The data was analyzed to verify the trends reported by the national 
+program.  Data were cleaned to align dates, locations and names of health 
+facilities, and shehias in districts.
+
+2.	Assess impact of potential reporting bias and “non-outbreak” data anomalies: 
+Data were then disaggregated into the smallest reporting unit possible and 
+evaluated for missing, duplicate and anomalous entries.  Reporting trends were 
+graphed to look for possible reporting bias including, but not limited to 
+inconsistent reporting, facility closures or potential name changes.  
+Assumptions were made that facilities with “0” cases noted did were reporting.   
+
+3.	Establishment of gold standard outbreak definition:  National officials and
+implementing partners to establish a gold standard definition of an outbreak 
+that warrants programmatic action.  This gold standard will then be applied to 
+the historical event to identify “true outbreaks”.
+
+4.	Comparison of gold-standard created with methods recommended by the WHO and 
+additional threshold methods:  Using the newly established gold standard 
+outbreak definition – examine which of the methods best match country’s needs.
+
+
+# Set up {.tabset .tabset-fade}
+## Package attachment
+Session information is provided below, including attached packages.
+```{r}
+pacman::p_load(rio, 
+               sf, 
+               tmap, 
+               geodata, 
+               plotly,
+               shiny,
+               tsibble,      
+               slider,
+               feasts,   
+               forecast,
+               yardstick,
+               surveillance,
+               tidyverse)
+
+pacman::p_load_gh("reconhub/linelist")
+pacman::p_load_gh("reconverse/trending")
+
+sessionInfo()
+
+```
+
+
+## Data importation and cleaning {.tabset .tabset-pills}
+```{r message=FALSE}
+#choose one...
+
+# data_count<-import("C:/Users/epuser/Desktop/all_data_combined.xlsx")
+
+#data_count<-import("final_data_cleaned.xlsx")
+data_count<-import("final_data_cleaned_De_dups.xlsx")
+
+
+# e_idsr <- rio::import("eIDSR_2021_2024_wk36.xlsx")
+
+##############
+znz_sf <- sf::st_read("Zanzibar Shehia_Refactored_11012021.shp", quiet = TRUE) %>% 
+  clean_data(guess_dates = FALSE) %>% 
+  sf::st_as_sf()
+
+
+a <- znz_sf %>% 
+  sf::st_drop_geometry() %>% 
+  distinct(region_nam, district_n) %>% 
+  mutate(region_nam = word(region_nam, 2, sep = "_")) %>% 
+  arrange(region_nam)
+# a$district_n
+```
+
+Case-level and aggregate routine data from Zanzibar are imported. Case-level 
+data imported here were previously de-duplicated (roughly 850 duplicated 
+observations were found from 2019 to 2024). There are
+**`r nrow(data_count)`** observations in the de-duplicated case-level data.
+Routine cleaning steps (character changes, number/factor rounding, etc.) are 
+done using the code listed here.
+
+```{r}
+
+data_raw <- data_count %>% 
+  linelist::clean_data(guess_dates = FALSE)%>% 
+  janitor::remove_constant()
+
+
+```
+
+### Dates
+The dates listed in the data provided are of different formats when imported 
+from Excel to R. All dates are changed for consistency and a new variable, 
+'epi_week' is created using the epiweek function from the _{lubridate}_ package. 
+Note that this week starts on Sunday and ends on Saturday. Another variable 
+'iso_week' is created to start on Monday and end on Sunday, which is the 
+convention in areas outside the U.S.
+
+Another variable, 'data_id' is created to provide each observation has a unique 
+ID. They are sequential ascending numbers. Similarly, facilities are given a 
+unique ID ('fac_id') for the purposes of these analyses.
+
+Observations with issues are pulled and listed below.
+
+```{r}
+data <- data_raw %>% 
+  mutate(data_id = row_number(),
+         date_fix1 = ifelse(str_detect(date_and_time_of_positive_results, "_"), 
+                                      NA_character_, 
+                                      date_and_time_of_positive_results),
+         date_fix2 = str_replace_all(as.character(janitor::excel_numeric_to_date(as.numeric(date_fix1))), 
+                                     "-", "_"), 
+         date_fix3 = ifelse(str_detect(date_and_time_of_positive_results, "t"),
+                                       str_extract(date_and_time_of_positive_results,
+                                                   "^.*(?=(t))"),
+                                       NA_character_),
+         date_fix4 = ifelse(is.na(date_fix2) & is.na(date_fix3),
+                            paste0(word(as.character(date_and_time_of_positive_results),
+                                        3, sep = "_"), "_",
+                                   word(as.character(date_and_time_of_positive_results),
+                                        2, sep = "_"), "_",
+                                   word(as.character(date_and_time_of_positive_results),
+                                        1, sep = "_")),
+                            NA),
+         date_fix = ymd(case_when(!is.na(date_fix3) ~ date_fix3,
+                                  !is.na(date_fix2) ~ date_fix2,
+                                  !is.na(date_fix4) ~ date_fix4,
+                                  .default = NA)),
+         epi_week = lubridate::epiweek(date_fix), 
+         iso_week = lubridate::isoweek(date_fix)) %>% 
+  group_by(facility) %>%
+  mutate(fac_id = cur_group_id())
+
+issues <- filter(data, is.na(epi_week))
+
+
+flextable::flextable(select(issues, data_id, 
+                            malaria_case_id, 
+                            facility,
+                            date_and_time_of_positive_results, 
+                            epi_week, 
+                            iso_week)) %>% 
+  flextable::colformat_num(big.mark = "")
+
+```
+
+```{r echo = FALSE}
+# a function to pull facility names by analysis assigned ID
+
+
+facility_id <- data %>% 
+  distinct(facility, fac_id)
+
+gn <- function(id){
+  a <- facility_id %>% 
+    filter(fac_id == {{id}})
+  
+  pull(a, facility)
+}
+
+get_name <- Vectorize(gn)
+
+# use/example
+#    > get_nameV(c(38, 23))
+#   [1] "bot_dispensary"     "altabib_dispensary"
+
+
+```
+
+
+The errors here appear to be obvious as they seem to be in the year. The following
+changes were made
+
+* 202413_05_21t13_30 -> 2024_05_21
+* 22024_04_10t19_59  -> 2024_04_10
+* 22023_12_11t15_20  -> 2023_12_11
+* 20244_08_31t14_30  -> 2024_08_31
+* 62024_06_05t12_54  -> 2024_06_05
+* 62024_02_20t20_49  -> 2024_02_20
+
+Additionally, one case was listed as being reported on December 31, 2024 (data_id = 35335). Per Coconut data, this should be listed as January 8, 2024.
+
+```{r}
+data1 <- data %>% 
+  mutate(date_fix5 = case_when(date_and_time_of_positive_results == "202413_05_21t13_30" ~ "2024_05_21",
+                               date_and_time_of_positive_results == "22024_04_10t19_59" ~ "2024_04_10",
+                               date_and_time_of_positive_results == "22023_12_11t15_20" ~ "2023_12_11",
+                               date_and_time_of_positive_results == "20244_08_31t14_30" ~ "2024_08_31",
+                               date_and_time_of_positive_results == "62024_06_05t12_54" ~ "2024_06_05",
+                               date_and_time_of_positive_results == "62024_02_20t20_49" ~ "2024_02_20",
+                               date_and_time_of_positive_results =="2024_12_31t00_21" & data_id == 35335 & date_fix == "2024-12-31" ~ "2024_01_08",
+                               .default = NA_character_), 
+         date_fix6 = ymd(case_when(!is.na(date_fix5) ~ date_fix5,
+                               !is.na(date_fix3) ~ date_fix3,
+                               !is.na(date_fix2) ~ date_fix2,
+                               !is.na(date_fix4) ~ date_fix4,
+                                  .default = NA)),
+         epi_week = lubridate::epiweek(date_fix6), 
+         iso_week = lubridate::isoweek(date_fix6), 
+         facility = ifelse(facility == "ff", "tunguu_phcu", facility))
+
+# test <- filter(data1, is.na(epi_week))
+
+
+```
+
+### Facility locations
+A list of facilities listed in more than one district is presented below.
+```{r}
+data2 <- data1 %>% 
+  group_by(facility_district, facility) %>% 
+  summarise(entries = n(), 
+            dates = list(as.Date(date_fix6))) %>% 
+    ungroup() %>% 
+  rowwise() %>% 
+  mutate(`First Report` = min(unlist(dates)), 
+         `Most Recent Report` = max(unlist(dates))) %>% 
+  ungroup() %>% 
+  select(-dates)
+
+
+data3 <- data2 %>% 
+  janitor::get_dupes(facility) %>% 
+  mutate(across(where(is.character), ~str_to_title(str_replace_all(.x, 
+                                                                   "_", 
+                                                                   " ")))) %>% 
+  select(-dupe_count) %>% 
+  arrange(facility, desc(entries)) %>% 
+  rename(Entries = entries, 
+         Facility = facility, 
+         District = facility_district)
+
+flextable::flextable(data3)
+
+# rio::export(data3, "C:/Users/epuser/Desktop/facility_district.xlsx")
+
+```
+
+
+The Royal Medical Clinic entries from Mjini are transferred to Magharibi B given
+that most reports were associated with Magharibi B, both before and after those 
+in Mjini. 
+
+```{r}
+
+data1 <- data1 %>% 
+  mutate(facility_district = ifelse(facility == "royal_medical_clinic", 
+                                    "magharibi_b", 
+                                    facility_district))
+
+data2 <- data1 %>% 
+  group_by(facility_district, facility) %>% 
+  summarise(entries = n(), 
+            dates = list(as.Date(date_fix6))) %>% 
+    ungroup() %>% 
+  rowwise() %>% 
+  mutate(`First Report` = min(unlist(dates)), 
+         `Most Recent Report` = max(unlist(dates))) %>% 
+  ungroup() %>% 
+  select(-dates)
+
+
+```
+
+A list of all facilities reporting data from each district (click download 
+button to view as Excel file). 
+
+```{r}
+data4 <- data2 %>% 
+  mutate(across(where(is.character), ~str_to_title(str_replace_all(.x, 
+                                                                   "_", 
+                                                                   " ")))) %>% 
+  arrange(facility_district, desc(entries)) %>% 
+  rename(Entries = entries, 
+         Facility = facility, 
+         District = facility_district)
+
+all_fac <- data4 %>% 
+ downloadthis::download_this(
+    output_name = "shehia_reports_dupes",
+    output_extension = ".xlsx",
+    button_label = "Facilities List",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-regular fa-arrow-down-to-line")
+
+```
+
+```{r echo=FALSE}
+all_fac
+```
+
+
+### Patient Locations
+```{r echo=FALSE}
+test <- data1 %>% 
+  group_by(district_for_shehia, shehia) %>% 
+  summarise(entries = n(),
+            dates = list(as.Date(date_fix6))) %>% 
+    ungroup() %>% 
+  rowwise() %>% 
+  mutate(`First Report` = min(unlist(dates)), 
+         `Most Recent Report` = max(unlist(dates))) %>% 
+  ungroup() %>% 
+  select(-dates) %>% 
+  janitor::get_dupes(shehia) %>% 
+  select(-dupe_count)
+
+
+```
+
+There are `r nrow(test)` entries demonstrating potential shehia/district 
+inconsistencies. Click the button below to download and view potential issues 
+as an xlsx sheet.
+
+```{r}
+test1 <- test %>% 
+  mutate(across(where(is.character), ~str_to_title(str_replace_all(.x, 
+                                                                   "_", 
+                                                                   " ")))) %>% 
+  arrange(shehia, desc(entries)) %>% 
+  rename(Entries = entries, 
+         Shehia = shehia, 
+         District = district_for_shehia) %>% 
+  ungroup() 
+
+flextable::flextable(test1)
+
+#rio::export(test1, "patient_shehia_district_incon.xlsx")
+
+dl_shehia_dupes <- test1 %>% 
+ downloadthis::download_this(
+    output_name = "shehia_reports_dupes",
+    output_extension = ".xlsx",
+    button_label = "Download Duplicates",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-regular fa-arrow-down-to-line")
+```
+
+```{r echo=FALSE}
+dl_shehia_dupes
+```
+
+The following changes are made to cases with inconsistent shehia and district
+data following input from ZAMEP. (Format: Shehia listed, district listed -> Shehia corrected, district corrected).
+
+* Bopwe, Magharibi A -> Bopwe, Wete
+* Mpendae,	Magharibi A -> Mpendae,	Mjini
+* Nungwi Kiungani,	Kaskazini B -> Nungwi Kiungani,	Kaskazini A
+* Urusi,	Magharibi A -> Urusi,	Mjini
+
+Shehias entered as being in more than one district are listed below following
+spell changes.
+
+```{r}
+data1_a <- data1 %>% 
+  mutate(district_for_shehia = case_when(district_for_shehia == "magharibi_a" & shehia == "bopwe" ~ "wete", 
+                                         district_for_shehia == "magharibi_a" & shehia == "mpendae" ~ "mjini", 
+                                         district_for_shehia == "kaskazini_b" & shehia == "nungwi_kiungani" ~ "kaskazini_a",
+                                         district_for_shehia == "magharibi_a" & shehia == "urusi" ~ "mjini", 
+                                         .default = district_for_shehia))
+
+
+test <- data1_a %>% 
+  group_by(district_for_shehia, shehia) %>% 
+  summarise(entries = n(),
+            dates = list(as.Date(date_fix6))) %>% 
+    ungroup() %>% 
+  rowwise() %>% 
+  mutate(`First Report` = min(unlist(dates)), 
+         `Most Recent Report` = max(unlist(dates))) %>% 
+  ungroup() %>% 
+  select(-dates) %>% 
+  janitor::get_dupes(shehia) %>% 
+  select(-dupe_count)
+
+test1 <- test %>% 
+  mutate(across(where(is.character), ~str_to_title(str_replace_all(.x, 
+                                                                   "_", 
+                                                                   " ")))) %>% 
+  arrange(shehia, desc(entries)) %>% 
+  rename(Entries = entries, 
+         Shehia = shehia, 
+         District = district_for_shehia) %>% 
+  ungroup() 
+data1 <- data1_a
+rm(data1_a)
+flextable::flextable(test1)
+```
+
+
+Number of shehias reporting in each district.
+
+```{r}
+data6 <- data1 %>% 
+  mutate(epi_year = epiyear(date_fix6)) %>% 
+  group_by(district_for_shehia, epi_year) %>% 
+  summarise(entries = length(unlist(list(unique(shehia))))) %>% 
+  ungroup() %>% 
+  mutate(across(where(is.character), ~str_to_title(str_replace_all(.x, 
+                                                                   "_", 
+                                                                   " ")))) %>% 
+  pivot_wider(names_from = epi_year, 
+              values_from = entries) %>% 
+  relocate(`2019`, .before = `2020`) %>% 
+ # select(-`2025`) %>% 
+  rename(District = district_for_shehia)
+
+data6 %>% 
+  flextable::flextable()
+
+# cases by shehia
+data6 <- data1 %>% 
+  mutate(epi_year = epiyear(date_fix6)) %>% 
+  group_by(district_for_shehia, shehia, epi_year) %>% 
+  summarise(entries = n()) %>% 
+  ungroup() %>% 
+  mutate(across(where(is.character), ~str_to_title(str_replace_all(.x, 
+                                                                   "_", 
+                                                                   " ")))) %>% 
+  pivot_wider(names_from = epi_year, 
+              values_from = entries) %>% 
+  relocate(`2019`, .before = `2020`) %>% 
+ # select(-`2025`) %>% 
+  rename(Shehia = shehia, 
+         District = district_for_shehia)
+
+dl_shehia <- data6 %>% 
+ downloadthis::download_this(
+    output_name = "shehia_reports",
+    output_extension = ".xlsx",
+    button_label = "Download",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-regular fa-arrow-down-to-line")
+
+# list of shehia locations and operational thresholds (defined by zamep and 
+# needed for metric_calc)
+
+# 1.Pemba: 3 cases in 2 consecutive weeks
+# 2.Kaskazini A (excluding Kilindi, Nungwi bandakuu and Nungwi kiungani that will  
+#   fall in the next category), Kaskazini B, Kati and Kusini: 4 cases in 2 
+#     consecutive  weeks
+# 3. Mjini magharibi: 5 cases in 2 consecutive weeks.
+
+
+shehia_thresholds <- data1 %>% 
+  group_by(island, district_for_shehia, shehia) %>% 
+  summarise(entries = n()) %>% 
+  ungroup() %>% 
+  mutate(threshold = case_when(district_for_shehia %in% c("chakechake", 
+                                    "micheweni", 
+                                    "mkoani", 
+                                    "wete") ~ 3, 
+                               district_for_shehia == "kaskazini_a" & shehia %in% c("kilindi", "nungwi_bandakuu", "nungwi_kiungani")~ 5, 
+                               district_for_shehia %in% c("kaskazini_a", 
+                                                          "kaskazini_b",
+                                                          "kati", 
+                                                          "kusini") ~ 4, 
+                               district_for_shehia %in% c("magharibi_a", 
+                                                          "magharibi_b",
+                                                          "mjini") ~ 5, 
+                               .default = NA)) %>% 
+  arrange(district_for_shehia, shehia) %>% 
+  drop_na(shehia)
+
+# there are some district/shehia combinations left out from this list if all 
+# cases were dropped from consistently report list
+
+rio::export(shehia_thresholds, "shehia_operational_thresholds.xlsx")
+
+
+```
+
+Names of shehias reporting in each district. Click the button to download 
+table in Excel.
+
+```{r echo=FALSE}
+dl_shehia
+```
+
+
+
+### Assessment of data missingness
+```{r}
+a <- list("age", 
+              "district_for_shehia", 
+              "shehia",
+              "case_classification_categories",
+              "facility_district", 
+              "facility")
+
+b <- map(a, 
+         function(.x){x = sym(.x)
+         data1 %>% 
+           filter(is.na({{x}}))
+         }
+)
+
+
+rm(c)
+  
+c <- map(b, ~nrow(.x)) %>% 
+  as_vector() %>% 
+  as_tibble() %>% 
+  add_column(Variable = c("Age", 
+              "District for Shehia", 
+              "Shehia",
+              "Case Classification Categories",
+              "Facility Disrict", 
+              "Facility"), 
+             .before = 1) %>% 
+  rename(`Observations Missing` = value) %>% 
+  flextable::flextable()
+
+
+
+
+c
+
+```
+
+
+# Descriptive analyses {.tabset .tabset-fade}
+
+## Cases over time {.tabset .tabset-pills}
+Hover over an individual trace for a pop-up displaying the epiweek and case 
+count information. Double click an individual trace in the legend to isolate a 
+single year; single click years to add or remove them from the plot. 
+
+### Nationally
+```{r out.width= 700, out.height = 700}
+
+agg_nat <- data1 %>% 
+  mutate(year_1= lubridate::epiyear(date_fix6)) %>% 
+  group_by(year_1, epi_week) %>% 
+  summarise(cases = n()) %>% 
+  ungroup() %>% 
+  rename(Week = epi_week, 
+         Cases = cases, 
+         Year = year_1) %>% 
+  mutate(Year = as.factor(Year))
+
+a <- ggplot(agg_nat)+
+  geom_line(aes(x = Week, y = Cases, 
+                group = Year, 
+                colour = Year), 
+            lwd = 1)+
+  theme_minimal()+
+  scale_color_manual(values = c("#786060", 
+        "#486090", 
+        "#a890a8", 
+        "#a84848", 
+        "#f0a860", 
+        "#d8c0a8",  
+        "#a86030")
+  )+
+  labs(x = "Epiweek", 
+       y = "Reported Cases")
+
+ggsave(plot = a, filename = here::here("pdf_report", "national_trends.png"),
+            width = 7, 
+            height = 5, 
+            units = "in")
+
+ggplotly(a)
+
+```
+
+### By District
+```{r}
+
+agg_dist <- data1 %>% 
+  mutate(year_1= lubridate::year(date_fix6)) %>% 
+  group_by(year_1, epi_week, district_for_shehia) %>% 
+  summarise(cases = n()) %>% 
+  ungroup() %>% 
+  rename(Week = epi_week, 
+         Cases = cases, 
+         Year = year_1) %>% 
+  mutate(Year = as.factor(Year)) %>% 
+  split(.$district_for_shehia)
+
+
+a <- map(agg_dist,
+         ~.x %>% 
+      ggplot()+
+      geom_line(aes(x = Week, y = Cases, 
+                group = Year, 
+                colour = Year), 
+                lwd = 1)+
+      theme_minimal()+
+        scale_color_manual(values = c("#786060", 
+        "#486090", 
+        "#a890a8", 
+        "#a84848", 
+        "#f0a860", 
+        "#d8c0a8",  
+        "#a86030")
+  )+
+      labs(x = "Epiweek", 
+           y = "Reported Cases"))
+```
+
+
+```{r include = FALSE}
+
+map2(a, 
+     map(list("a", "b", "c", "d", 
+              "e", "f", "g", "h", 
+              "i", "j", "k"), ~paste0(here::here("pdf_report", "appendix3"), 
+                                 "/",.x, ".png")),
+    ~ggsave(plot = .x, filename = .y, 
+            width = 6, 
+            height = 4, 
+            units = "in"))
+
+```
+
+#### Chakechake
+```{r out.width= 700, out.height = 700, message=FALSE}
+ggplotly(a[[1]])
+```
+
+#### Kaskazini A
+```{r out.width= 700, out.height = 700, message=FALSE}
+ggplotly(a[[2]])
+```
+
+#### Kaskazini B
+```{r out.width= 700, out.height = 700, message=FALSE}
+ggplotly(a[[3]])
+```
+
+#### Kati
+```{r out.width= 700, out.height = 700, message=FALSE}
+ggplotly(a[[4]])
+```
+
+#### Kusini
+```{r out.width= 700, out.height = 700, message=FALSE}
+ggplotly(a[[5]])
+```
+
+#### Magharibi A
+```{r out.width= 700, out.height = 700, message=FALSE}
+ggplotly(a[[6]])
+```
+
+#### Magharibi B
+```{r out.width= 700, out.height = 700, message=FALSE}
+ggplotly(a[[7]])
+```
+
+#### Micheweni
+```{r out.width= 700, out.height = 700, message=FALSE}
+ggplotly(a[[8]])
+```
+
+#### Mjini
+```{r out.width= 700, out.height = 700, message=FALSE}
+ggplotly(a[[9]])
+```
+
+#### Mkoani
+```{r out.width= 700, out.height = 700, message=FALSE}
+ggplotly(a[[10]])
+```
+
+#### Wete
+```{r out.width= 700, out.height = 700, message=FALSE}
+ggplotly(a[[11]])
+```
+
+
+```{r echo = FALSE}
+rm(a)
+```
+
+
+```{r eval = FALSE, echo = FALSE, out.width= 700, out.height = 700}
+
+# a shiny app for selection of district; works, but makes the output
+#         heavy
+
+agg_dist1 <- data1 %>% 
+  mutate(year_1= lubridate::year(date_fix6)) %>% 
+  group_by(year_1, epi_week, district_for_shehia) %>% 
+  summarise(cases = n()) %>% 
+  ungroup() %>% 
+  rename(Week = epi_week, 
+         Cases = cases, 
+         Year = year_1) %>% 
+  mutate(Year = as.factor(Year))
+
+
+shiny::shinyApp(
+   
+     ui = fluidPage(
+       selectInput("district", "District:",
+                   choices = unique(agg_dist1$district_for_shehia)),
+       plotlyOutput("case_plot")
+     ),
+   
+     server = function(input, output) {
+       d <-reactive({
+          agg_dist1 %>% 
+           dplyr::filter(
+             district_for_shehia == input$district
+           )
+       })
+       output$case_plot <-renderPlotly(
+
+          ggplotly(ggplot(d())+
+           geom_line(aes(x = Week, 
+                         y = Cases, 
+                         group = Year, 
+                         colour = Year))+
+             theme_minimal()+
+             labs(x = "Epiweek", 
+                  y = "Reported Cases"))
+                 )
+       })
+```
+
+## Description of trends {.tabset .tabset-pills}
+
+### Decomposition of baseline
+
+A classical decomposition of the data below shows the contributions of the 
+overall trend, the seasonality, and the residuals/randomness. Note that the 
+data shown here do not include data beyond calendar year 2022 due to the known
+upsurge of cases (scale on the y-axis became too large to examine more nuanced 
+details.)
+
+```{r}
+data_agg <- data1 %>% 
+  ungroup() %>% 
+  mutate(x_epiweek = yearweek(date_fix6, week_start = 1)) %>% 
+  filter(lubridate::epiyear(date_fix6) <= 2022) %>% 
+  count(x_epiweek, .drop = FALSE) %>% 
+  tsibble(index = x_epiweek)
+
+
+test <- data_agg %>% 
+  # using an additive classical decomposition model
+  model(classical_decomposition(n, type = "additive")) %>% 
+  ## extract the important information from the model
+  components()
+
+
+b <- map(list("n", 
+     "trend", 
+     "seasonal", 
+     "random"), 
+         function(.x){z = sym(.x)
+         if (z == "random"){
+         ggplot(test)+
+  geom_line(aes(x = x_epiweek, y = {{z}}))+
+  theme_minimal()+
+           labs(x = "Epi Week", 
+                y = paste0(str_to_title(z)))}
+          else{ggplot(test)+
+  geom_line(aes(x = x_epiweek, y = {{z}}))+
+  theme_minimal()+
+           labs(y = paste0(str_to_title(z)))+
+           theme(axis.title.x=element_blank(),
+                   axis.text.x=element_blank(),
+                   axis.ticks.x=element_blank())}
+         }
+)
+
+decomp <- cowplot::plot_grid(plotlist = b, align = "hv", axis = "tblr", ncol = 1)
+
+ggsave(plot = decomp,
+       filename = here::here("pdf_report", "decomp.png"),
+            width = 7, 
+            height = 5, 
+            units = "in")
+decomp   
+
+```
+
+### Autocorrelation 
+
+```{r}
+rm(b)
+
+a <- stats::Box.test(data_agg$n, type = "Ljung-Box")
+
+b <- ifelse(a[["p.value"]] < 0.001, "< 0.001", a[["p.value"]])
+
+c <- ifelse(a[["p.value"]] < 0.05, "is", "is not")
+
+```
+
+Conducting the Ljung-Box test for autocorrelation of the data indicates that 
+there `r c` autocorrelation in the data, with a calculated p-value of `r b`.
+
+A plot of the observed correlation depicted as the height of the segments 
+between a weekly count value and the values observed in the weeks preceding it 
+(lags, shown on the x-axis) is depicted below. For example, the first line shown
+here (x = 1) depicts the relation between each observation and the observation 
+before it (lag of 1). Fifty-two lags are shown, representing a full calendar 
+year.
+
+
+
+```{r}
+rm(b)
+
+test <- data_agg %>% 
+  ## calculate autocorrelation using a full years worth of lags
+  ACF(n, lag_max = 52) %>% 
+  mutate(lag = as.numeric(str_remove_all(lag, "W")))
+
+
+auto <- ggplot(test)+
+  geom_segment(aes(x = lag, xend = lag, 
+                                y = 0, yend = acf))+
+  theme_minimal()+
+  labs(x = "Lag (weeks)", 
+       y = "Autocorrelation")+
+  geom_hline(yintercept = 0)
+
+ggsave(plot = auto,
+       filename = here::here("pdf_report", "autocorr.png"),
+            width = 7, 
+            height = 5, 
+            units = "in")
+auto  
+
+## add confidence intervals if desired
+```
+
+
+## Number of facilities {.tabset .tabset-pills}
+### Active facilities over time
+```{r message=FALSE, results='hide',fig.keep='all'}
+data3 <- data1 %>% 
+  mutate(year1 = lubridate::year(date_fix6), 
+         year_epi = lubridate::epiyear(date_fix6), 
+         year_iso = lubridate::isoyear(date_fix6)) 
+
+
+#  write data for comparison
+#data3 %>% 
+#  select(-c(date_fix1, date_fix2, date_fix3, 
+#            date_fix4, date_fix5)) %>% 
+#  rename(date = date_fix6) %>% 
+#  rio::export("deduped_unfiltered_data.xlsx")
+
+epi_week_cont <- data3 %>% 
+  group_by(year_epi) %>% 
+  summarise(epi_weeks = list(unique(epi_week))) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(n_epi_weeks = max(unlist(epi_weeks))) %>% 
+  ungroup() %>% 
+  select(-epi_weeks) %>% 
+  mutate(order = row_number()-1, 
+         lag_x_epi = ifelse(order == 0, 0, lag(n_epi_weeks)), 
+         sum_x_epi = cumsum(lag_x_epi), 
+         ) %>% 
+  right_join(data3, by = "year_epi") %>% 
+  mutate(x_epi = epi_week + sum_x_epi, 
+         x_epi_mon = floor(x_epi/4))
+
+iso_week_cont <- data3 %>% 
+  group_by(year_iso) %>% 
+  summarise(iso_weeks = list(unique(iso_week))) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(n_iso_weeks = max(unlist(iso_weeks))) %>% 
+  ungroup() %>% 
+  select(-iso_weeks) %>% 
+  mutate(order = row_number()-1, 
+         lag_x_iso = ifelse(order == 0, 0, lag(n_iso_weeks)),
+         sum_x_iso = cumsum(lag_x_iso)
+         ) %>% 
+  right_join(data3, by = "year_iso") %>% 
+  mutate(x_iso = iso_week + sum_x_iso, 
+         x_iso_mon = floor(x_iso/4))
+
+
+
+plot2 <- epi_week_cont %>% 
+  split(.$facility_district) %>% 
+  map(., ~.x %>% 
+        group_by(x_epi_mon) %>% 
+        summarise(hf = length(unlist(list(unique(facility))))) %>% 
+        ungroup() %>% 
+        ggplot(aes(x=x_epi_mon, 
+                      y = hf))+
+        geom_col()+
+        geom_smooth(method='lm', 
+                    se = FALSE,
+                    formula = y~x)+
+        theme_minimal()+
+        labs(x = "Epiweek/4 (sequentially starting 2019)", 
+           y = "Number of health facilities\n reporting in district"))
+plot2_title <- map2(plot2, map(names(plot2), ~str_to_title(str_replace_all(.x, 
+                                                                           "_", 
+                                                                           " "))),
+                    ~ .x + ggtitle(.y))
+
+map2(plot2_title, 
+     map(list("a", "b", "c", "d", 
+              "e", "f", "g", "h", 
+              "i", "j", "k"), ~paste0(here::here("pdf_report", "facility_numbers"), 
+                                 "/",.x, ".png")),
+    ~ggsave(plot = .x, filename = .y, 
+            width = 6, 
+            height = 4, 
+            units = "in"))
+
+
+plot2_title
+
+
+
+
+
+```
+
+
+### Individual facility reporting over time
+
+These charts show reporting of _any_ malaria cases by epiweek (x-axis) at the 
+individual facility level (y-axis). Weeks during which at least one malaria 
+case was reported from the facility a marked with a black square. Weeks when 
+there were no cases reported are left transparent. Background colors denote 
+years (2019 is white and at the leftmost margin, 2020 is the first blue area 
+immediately to the right of 2019, 2021 is the next white one, etc). Facilities
+within each district are ordered vertically by date of first reported malaria 
+case within the time frame of interest. 
+
+As a lack of reported could be due to 1) no diagnosed malaria cases at the 
+facility, 2) failure to report cases diagnosed at the facility, or 3) loss of 
+data from previously reported cases. Though cases of malaria have not been 
+common recently in Zanzibar, the pattern of reporting from individual facilities
+may provide some insight into when individual facilities became active and/or 
+started reporting versus simply had no malaria cases present. For instance, a 
+facility that did not report a single case until 2023, but then consistently 
+reported cases thereafter likely represents an issue with reporting/data rather
+than accurately reflecting an increase in burden. 
+
+
+```{r message=FALSE, results='hide',fig.keep='all'}
+rm(plot2_title, plot2)
+
+
+tiles <- epi_week_cont %>% 
+  group_by(facility) %>% 
+  mutate(dates = list(as.Date(date_fix6))) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(`First Report` = min(unlist(dates)), 
+         `Most Recent Report` = max(unlist(dates))) %>% 
+  ungroup() %>% 
+  select(-dates) %>% 
+  mutate(facility1 = str_to_title(str_replace_all(facility, "_", " ")), 
+         fac_f = as.factor(facility1), 
+         dist_f = as.factor(facility_district), 
+         week_f = as.factor(x_epi)) %>% 
+  mutate(fac_f1 = fct_reorder(fac_f, `First Report`)) %>% 
+  count(fac_f1, dist_f, week_f, .drop = FALSE) %>% 
+  mutate(cases = ifelse(n > 0, 1, 0)) %>% 
+  split(.$dist_f) %>% 
+  map(~.x %>% 
+        group_by(fac_f1) %>% 
+        mutate(sum = sum(cases)) %>% 
+        filter(sum != 0) %>% 
+        ungroup() %>% 
+        mutate(cases = as.factor(cases)))
+
+
+
+epiyears <- data3 %>% 
+  group_by(year_epi) %>% 
+  summarise(epi_weeks = list(unique(epi_week))) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(n_epi_weeks = max(unlist(epi_weeks))) %>% 
+  ungroup() %>% 
+  select(-epi_weeks) %>% 
+  mutate(order = row_number()-1, 
+         lag_x_epi = ifelse(order == 0, 0, lag(n_epi_weeks)), 
+         sum_x_epi = cumsum(lag_x_epi),
+         x_min = sum_x_epi,
+         x_max = lead(sum_x_epi)
+         ) %>% 
+  select(c(1, 6,7))
+
+
+reports <- map(tiles, ~ggplot(.x)+
+                 annotate("rect", xmin = 0, xmax = 52, 
+                          ymin = -Inf, 
+                          ymax = Inf,
+                          fill = "white", 
+                          alpha = 0.2
+                          )+
+                 annotate("rect", xmin = 52, xmax = 105, 
+                          ymin = -Inf, 
+                          ymax = Inf,
+                          fill = "cadetblue3", 
+                          alpha = 0.2
+                          )+
+                 annotate("rect", xmin = 105, xmax = 157, 
+                          ymin = -Inf, 
+                          ymax = Inf,
+                          fill = "white", 
+                          alpha = 0.2
+                          )+
+                 annotate("rect", xmin = 157, xmax = 209, 
+                          ymin = -Inf, 
+                          ymax = Inf,
+                          fill = "cadetblue3", 
+                          alpha = 0.2
+                          )+
+                 annotate("rect", xmin = 209, xmax = 261, 
+                          ymin = -Inf, 
+                          ymax = Inf,
+                          fill = "white", 
+                          alpha = 0.2
+                          )+
+                 annotate("rect", xmin = 261, xmax = max(c(298, .$week_f)), 
+                          ymin = -Inf, 
+                          ymax = Inf,
+                          fill = "cadetblue3", 
+                          alpha = 0.2
+                          )+
+                 geom_tile(aes(x= week_f, 
+                    y = fac_f1, 
+                    fill = cases))+
+        labs(x = "Week", 
+             y = "Facility")+
+        scale_fill_manual(values = c("00FFFFFF", "black"))+
+        theme(legend.position = "none", 
+              axis.title.x=element_blank(),
+              axis.text.x=element_blank(),
+              axis.ticks.x=element_blank()))
+
+report_titles <- map2(reports, map(names(reports), 
+                                   ~str_to_title(str_replace_all(.x, "_", " "))),
+                      ~ .x + ggtitle(.y))
+
+
+map2(report_titles, 
+     map(list("a", "b", "c", "d", 
+              "e", "f", "g", "h", 
+              "i", "j", "k"), ~paste0(here::here("pdf_report", "reporting"), 
+                                 "/",.x, ".png")),
+    ~ggsave(plot = .x, filename = .y, 
+            width = 6, 
+            height = 4, 
+            units = "in"))
+
+
+report_titles
+
+
+
+```
+
+
+# Filter to consistent reporters {.tabset .tabset-fade}
+
+Based on above graphics, filtered out 'inconsistent reporters' defined as first 
+report received in 2021 or later or last report received in 2021 or earlier.
+
+## First pass
+
+```{r}
+hf_filter <- data1 %>% 
+  group_by(facility) %>% 
+  mutate(dates = list(as.Date(date_fix6))) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(`First Report` = min(unlist(dates)), 
+         `Most Recent Report` = max(unlist(dates))) %>% 
+  ungroup() %>% 
+  mutate(epi_year_first = epiyear(`First Report`), 
+         epi_year_last = epiyear(`Most Recent Report`)) %>% 
+  filter(epi_year_first <= 2020, 
+         epi_year_last >= 2022)
+
+a <- length(unique(data1$fac_id))  
+b <- length(unique(hf_filter$fac_id))  
+
+hf_censored <- data1 %>% 
+  filter(!fac_id %in% hf_filter$fac_id) %>% 
+  group_by(facility) %>% 
+  mutate(dates = list(as.Date(date_fix6))) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(`First Report` = min(unlist(dates)), 
+         `Most Recent Report` = max(unlist(dates))) %>% 
+  ungroup() %>% 
+  mutate(epi_year_first = epiyear(`First Report`), 
+         epi_year_last = epiyear(`Most Recent Report`), 
+         `First Report` = as.Date(ifelse(epi_year_first > 2020, `First Report`, NA)), 
+         `Most Recent Report` = as.Date(ifelse(epi_year_last < 2022, 
+                                       `Most Recent Report`, 
+                                       NA))
+  ) %>% 
+  distinct(facility_district, facility, `First Report`, `Most Recent Report`) %>% 
+  arrange(facility_district, `First Report`, `Most Recent Report`) %>% 
+  mutate(across(where(is.character), ~str_to_title(str_replace_all(.x, 
+                                                                  "_", 
+                                                                  " ")))) %>% 
+  rename(District = facility_district, 
+         `Facility Name` = facility)
+
+# a-b
+# nrow(data1) - nrow(hf_filter)
+# nrow(hf_filter)
+# b
+
+#   rio::export(hf_censored, "censored_hf_1.xlsx")
+```
+
+Using this approach, `r a-b` facilities and `r nrow(data1) - nrow(hf_filter)` 
+cases were filtered out, leaving `r nrow(hf_filter)` reported cases from
+`r b` facilities. 
+
+
+## Combining facilities
+A number of health facilities in the list were noted to have changed names over
+the period in question. They are first examined for the possibility of any 
+duplicate entries and subsequently combined.
+
+There are 16 pairs (facilities requiring changing/merging of two separate names).
+
+```{r message = FALSE, results='hide', fig.keep='all'}
+hf_name_change <- rio::import("censored_hf_mk_hm.xlsx") %>% 
+  linelist::clean_data(guess_dates = FALSE) %>% 
+  filter(!is.na(changed_to))
+
+a <- hf_name_change %>% 
+  select(1:3) %>% 
+  pivot_longer(-1) %>% 
+  filter(value != "bot_dispensary")
+
+data3 <- data1 %>% 
+  mutate(year1 = lubridate::year(date_fix6), 
+         year_epi = lubridate::epiyear(date_fix6), 
+         year_iso = lubridate::isoyear(date_fix6)) 
+
+
+epi_week_cont <- data3 %>% 
+  group_by(year_epi) %>% 
+  summarise(epi_weeks = list(unique(epi_week))) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(n_epi_weeks = max(unlist(epi_weeks))) %>% 
+  ungroup() %>% 
+  select(-epi_weeks) %>% 
+  mutate(order = row_number()-1, 
+         lag_x_epi = ifelse(order == 0, 0, lag(n_epi_weeks)), 
+         sum_x_epi = cumsum(lag_x_epi), 
+         ) %>% 
+  right_join(data3, by = "year_epi") %>% 
+  mutate(x_epi = epi_week + sum_x_epi) 
+
+hf_combo_examine <- epi_week_cont %>% 
+  ungroup() %>% 
+  filter(facility %in% a$value) %>% 
+  left_join(a, by = c("facility" = "value", 
+                      "facility_district" = "district"))
+
+##### check for introduced duplication #####
+#   b <- janitor::get_dupes(hf_combo_examine, data_id)
+
+# no duplicate entries due to join
+
+hf_join_agg <- hf_combo_examine %>% 
+  count(facility, facility_district, x_epi, name)
+
+a1 <- hf_name_change %>% 
+  select(1:3) %>% 
+  filter(changed_to != "bot_dispensary") # same spelling after changed to lower case
+
+
+c <- map2(a1$facility_name, a1$changed_to, 
+     function(a,b){ 
+       temp <- hf_join_agg %>% 
+       filter(facility == a | facility == b) 
+       
+       temp1 <- length(unique(temp$name))
+       
+       if (temp1 == 1) {tibble(facility = unique(temp$facility))
+         
+       } else{temp %>% 
+           mutate(name = case_when(name == "changed_to" ~ "New Name", 
+                                   name == "facility_name" ~ "Old Name", 
+                                   .default = "error")) %>% 
+                    ggplot()+
+       geom_col(aes(x=x_epi, y = n, fill=name, group = name), 
+                position = "dodge")+
+           theme_minimal()+
+           scale_fill_manual(values = c("#786060","#f0a860"))+
+           labs(x = "Epiweek",
+                y = "Cases",
+                title = paste0(str_to_title(str_replace_all(a, "_", " ")),
+                         " / ", 
+                         str_to_title(str_replace_all(b, "_", " "))))}}
+       ) 
+
+# those with graphs... i.e. both names appear in data base
+c1 <- keep(c, ~length(.x) > 1) %>% 
+  map(~.x + 
+        labs(y = "Case Counts",
+             x = "Epiweek", 
+             fill = "Name Type"))
+
+map2(c1, 
+     map(list("a", "b"), ~paste0(here::here("pdf_report"), 
+                                 "/fac_name_change_", 
+                                 .x, ".png")),
+    ~ggsave(plot = .x, filename = .y, 
+            width = 7, 
+            height = 5, 
+            units = "in"))
+
+# those with only one of two alternative names present
+c2 <- keep(c, ~length(.x) == 1) %>% 
+  list_rbind() %>% 
+  mutate(facility = str_to_title(str_replace_all(facility, "_", " ")))
+
+a1_a <- a1 %>% 
+  rename(`Old Name` = facility_name, 
+         `New Name` = changed_to, 
+         District = district) %>% 
+  mutate(across(everything(), ~str_to_title(str_replace_all(.x, "_", " ")))) %>% 
+  filter(`Old Name` %in% c2$facility | `New Name` %in% c2$facility)
+
+rio::export(a1_a, file = here::here("pdf_report", "facility_name_change.xlsx"))
+rio::export(c2, file = here::here("pdf_report", "facility_name_change_c2.xlsx"))
+
+  
+c3 <- flextable::flextable(a1_a) %>% 
+  flextable::bold(a1_a$`Old Name` %in% c2$facility, 2) %>% 
+  flextable::bold(a1_a$`New Name` %in% c2$facility, 3) 
+
+
+
+```
+
+Name changes did not seem to add duplicates to the dataset as often only one of
+the two names appeared in the dataset. Cases reported under each name are 
+plotted below to ensure duplicate entries were not added under alternative
+facility names.
+
+```{r message = FALSE, results='hide',fig.keep='all'}
+c1
+```
+
+Only one of the two names provided for the reminder of facilities appeared in 
+the dataset. Pairs are listed below, with the original and alternative spellings
+provided. Those in **bold** were present in the final dataset.
+
+```{r }
+c3
+```
+
+
+
+```{r}
+rm(c1,c2,c3)
+
+hf_filter1 <- data1 %>% 
+  left_join(select(hf_name_change, c(1:3)), by = c("facility" = "facility_name", 
+                                                   "facility_district" = "district")) %>% 
+  mutate(facility = ifelse(!is.na(changed_to), changed_to, facility)) 
+
+#  test <- filter(hf_filter1, facility == "ihsani_medical_clinic")
+# test <- filter(hf_filter, !is.na(date_fix5))
+
+hf_filter <- hf_filter1 %>% 
+  group_by(facility) %>% 
+  mutate(dates = list(as.Date(date_fix6))) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(`First Report` = min(unlist(dates)), 
+         `Most Recent Report` = max(unlist(dates))) %>% 
+  ungroup() %>% 
+  mutate(epi_year_first = epiyear(`First Report`), 
+         epi_year_last = epiyear(`Most Recent Report`)) %>% 
+  filter(epi_year_first <= 2020, 
+         epi_year_last >= 2022)
+
+# no duplicates introduced: test <- janitor::get_dupes(hf_filter, data_id)
+
+a <- length(unique(data1$facility))  
+a1 <- length(unique(hf_filter1$facility)) 
+b <- length(unique(hf_filter$facility))  
+
+hf_censored1 <- hf_filter1 %>% 
+  filter(!fac_id %in% hf_filter$fac_id) %>% 
+  group_by(facility) %>% 
+  mutate(dates = list(as.Date(date_fix6))) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(`First Report` = min(unlist(dates)), 
+         `Most Recent Report` = max(unlist(dates))) %>% 
+  ungroup() %>% 
+  mutate(epi_year_first = epiyear(`First Report`), 
+         epi_year_last = epiyear(`Most Recent Report`), 
+         `First Report` = as.Date(ifelse(epi_year_first > 2020, `First Report`, NA)), 
+         `Most Recent Report` = as.Date(ifelse(epi_year_last < 2022, 
+                                       `Most Recent Report`, 
+                                       NA))
+  ) %>% 
+  distinct(facility_district, facility, `First Report`, `Most Recent Report`) %>% 
+  arrange(facility_district, `First Report`, `Most Recent Report`) %>% 
+  mutate(across(where(is.character), ~str_to_title(str_replace_all(.x, 
+                                                                  "_", 
+                                                                  " ")))) %>% 
+  rename(District = facility_district, 
+         `Facility Name` = facility)
+
+all_facilities <- hf_filter1 %>% 
+  group_by(facility) %>% 
+  mutate(dates = list(as.Date(date_fix6))) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(`First Report` = min(unlist(dates)), 
+         `Most Recent Report` = max(unlist(dates))) %>% 
+  count(facility, facility_district, `First Report`, `Most Recent Report`) %>% 
+  arrange(facility_district, facility, `First Report`)
+
+
+
+# rio::export(list(all_facilities, hf_censored1), 
+#            "hf_censored_postname_change.xlsx")
+
+
+hf_censored2 <- list("Included Facilities" =  all_facilities, 
+                     "Censored Facilities" = hf_censored1) %>% 
+ downloadthis::download_this(
+    output_name = "facilities_censored",
+    output_extension = ".xlsx",
+    button_label = "Facility inclusion & censorship",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-regular fa-arrow-down-to-line")
+
+#a1-b
+```
+
+After updating facility names, `r a1-b` facilities and 
+`r nrow(data1) - nrow(hf_filter)` cases were filtered out, leaving 
+`r nrow(hf_filter)` reported cases from `r b` facilities. All facilities 
+appearing in the data and those that were censored for these analyses are listed
+in the Excel sheet below.
+
+```{r}
+hf_censored2
+```
+
+
+## Relative loss of facilities by district
+
+Bar charts show the number of facilities that are included in the trend analysis
+as well as those present in the data but censored for the trend analysis due to 
+inconsistent reporting. The top panel indicates the total number of facilities
+included by district (blue), as well as those that reported at least one malaria
+case in the period from 2019 to 2024, but were excluded from trend analysis 
+(grey). 
+
+The bottom panel shows the number of included/excluded (blue and grey, 
+respectively) facilities as a proportion of the total number of facilities ever 
+reporting.  
+```{r}
+rm(hf_censored2)
+
+a <- hf_filter %>% 
+  group_by(facility_district) %>% 
+  summarise(n = length(unlist(list(unique(fac_id)))))
+
+b <- hf_filter1 %>% 
+  group_by(facility_district) %>% 
+  summarise(n_tot = length(unlist(list(unique(fac_id))))) %>% 
+  left_join(a, by = "facility_district") %>% 
+  mutate(delta = n_tot - n, 
+         rel_delta = (n_tot - n)/n_tot, 
+         plot = rel_delta*-100)
+
+c <- b %>% 
+  select(facility_district, n, delta) %>% 
+  pivot_longer(-facility_district) %>% 
+  mutate(facility_district = str_to_title(str_replace_all(facility_district, 
+                                                          "_", 
+                                                          " ")))
+
+c_1 <- ggplot(c)+
+  geom_bar(aes(x = facility_district, y = value, group = name, 
+               fill = name), 
+           stat = "identity", position = "stack",color = "grey20"
+           )+
+  scale_fill_manual(values = c("grey","darkblue"))+
+  theme_minimal()+
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        legend.position = "none")+
+  labs(y = "Count")
+
+c_2 <- ggplot(c)+
+  geom_bar(aes(x = facility_district, y = value, group = name, 
+               fill = name), 
+           stat = "identity", position = "fill", color = "grey20"
+           )+
+    scale_fill_manual(values = c("grey","darkblue"))+
+  theme_minimal()+
+  labs(x = "District", 
+       y = "Proportion")+
+  scale_x_discrete(guide = guide_axis(n.dodge = 2))+
+  theme(legend.position = "none")
+
+
+fac_loss <- cowplot::plot_grid(c_1, NULL, c_2, ncol = 1, rel_heights = c(1,-0.1, 1),
+                   align = c("hv"), 
+                   axis = "tblr")
+
+ggsave(plot = fac_loss, filename = here::here("pdf_report", "fac_loss.png"),
+            width = 7, 
+            height = 5, 
+            units = "in")
+
+fac_loss
+```
+
+## Included health facilities reporting by year
+Fill color of bars represents the year (2019 being the lightest; 2024 being the 
+darkest). _A._ All facilities present in de-duplicated data set. _B._ Facilities
+present each year after filtering to consistent reportedrs. 
+```{r}
+a <- hf_filter1 %>% 
+  mutate(epi_year = factor(epiyear(date_fix6))) %>% 
+  group_by(epi_year, facility_district) %>% 
+  summarise(count = length(unlist(list(unique(facility))))) %>% 
+  ungroup() %>% 
+  mutate(District = str_to_title(str_replace_all(facility_district, 
+                                                 "_", " "))) %>% 
+  rename(Year = epi_year) %>% 
+  ggplot()+
+  geom_col(aes(x = District, y = count, 
+               fill= Year, group = Year), 
+           position = "dodge", 
+           colour = "black")+
+  scale_fill_brewer(palette = "Blues")+
+  theme_minimal()+
+  labs(y = "Health Facilities Reporting")+
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), 
+        legend.position = "none")
+
+b <- hf_filter %>% 
+  mutate(epi_year = factor(epiyear(date_fix6))) %>% 
+  group_by(epi_year, facility_district) %>% 
+  summarise(count = length(unlist(list(unique(facility))))) %>% 
+  ungroup() %>% 
+  mutate(District = str_to_title(str_replace_all(facility_district, 
+                                                 "_", " "))) %>% 
+  rename(Year = epi_year) %>% 
+  ggplot()+
+  geom_col(aes(x = District, y = count, 
+               fill= Year, group = Year), 
+           position = "dodge", 
+           colour = "black")+
+  scale_fill_brewer(palette = "Blues")+
+  theme_minimal()+
+  labs(y = "Health Facilities Reporting")+
+  scale_x_discrete(guide = guide_axis(n.dodge = 2))+
+  theme(legend.position = "none")
+  
+
+fac_year <- cowplot::plot_grid(a, NULL, b, ncol = 1, rel_heights = c(1, -0.1, 1), 
+                   labels = c("A", "B"), 
+                   align = "hv",
+                   axis = "tblr")
+
+ggsave(plot = fac_year, filename = here::here("pdf_report", "fac_year.png"),
+            width = 7, 
+            height = 5, 
+            units = "in")
+fac_year
+       
+```
+
+
+## Location of excluded cases {.tabset .tabset-pills}
+### Merging case data with shapefile
+To incorporate case data into shehia shapefile, they must have consistent names.
+Required spell changes are pulled and shown below. Excel file of all shehias not
+matching by district and shehia is downloadable using button below. Columns A and
+B are entries in the shapefile that are not matched in the case data (possible 
+if sheia had zero cases from 2019-2014); columns C and D are those that are 
+listed in case data that do not match the shapefile names (should *not* be 
+possible, indicative of either misspelling or change in admin areas during 
+period from 2019 to 2024).
+
+```{r}
+# mapping shehias present in case data
+
+shehia_loc <- rio::import("shehia_loc.xlsx") %>% 
+  linelist::clean_data() %>% 
+  select(c(2,4))
+
+# match shehia spelling in shapefile and linelist
+
+map_names <- mutate(st_drop_geometry(shehia_loc), id = row_number())
+
+shehia_case <- hf_filter1 %>% 
+  group_by(district_for_shehia, shehia) %>% 
+  summarise(cases= n()) %>% 
+  left_join(map_names, by = c("district_for_shehia" = "district_n", 
+                                                 "shehia" = "shehia_nam"))
+
+map_orphans <- map_names %>% 
+  filter(!id %in% shehia_case$id) %>% 
+  add_row(district_n = rep(NA, 12), 
+          shehia_nam = rep(NA, 12), 
+          id = rep(NA, 12))
+
+
+case_orphans <- filter(shehia_case, is.na(id))
+
+
+spelling_to_change <- bind_cols(map_orphans, case_orphans) %>% 
+  select(-starts_with("id")) %>% 
+  select(-cases)
+
+
+spell_change <- spelling_to_change %>% 
+ downloadthis::download_this(
+    output_name = "spelling_to_change",
+    output_extension = ".xlsx",
+    button_label = "Spelling Changes",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-regular fa-arrow-down-to-line")
+```
+
+
+```{r echo=FALSE}
+spell_change
+```
+
+The following spelling changes in the *malaria case data* were made to match
+spelling in the shapefile. Note that this table is not formatted for reading and
+all names are in snakecase with special characters replaced by an underscore.
+
+Shehia spelling.
+```{r}
+shehia_spelling1 <- rio::import("shehia_spell_corrected.xlsx")
+
+shehia_district_spelling2 <- rio::import("shehia_district_not_match_shp_HM.xlsx") %>% 
+  linelist::clean_data(guess_dates = FALSE) 
+
+shehia_spelling <- shehia_spelling1 %>% 
+  select(-c(1,2))
+
+flextable::flextable(shehia_spelling %>% 
+  drop_na(change_case_to)
+)
+```
+
+Shehia/District combinations with changes.
+```{r}
+flextable::flextable(shehia_district_spelling2)
+
+```
+
+
+```{r}
+data <- hf_filter1 %>% 
+  left_join(shehia_spelling, by =(c("district_for_shehia", 
+                                  "shehia"))) %>% 
+  mutate(shehia = ifelse(is.na(change_case_to), shehia, 
+                         change_case_to), 
+         epi_year = epiyear(date_fix6), 
+  ) %>% 
+  select(-c(changed_to, change_case_to, date_fix)) %>% 
+  rename(date_fix = date_fix6) %>% 
+  left_join(shehia_district_spelling2, 
+            by = c("shehia" = "shehia", 
+                   "district_for_shehia" = "district_for_shehia")) %>% 
+  mutate(shehia = case_when(!is.na(correct_shehia)~ correct_shehia, 
+                            .default = shehia), 
+         district_for_shehia = case_when(!is.na(correct_district)~ correct_district, 
+                            .default = district_for_shehia)) %>% 
+  select(-c(cases, id, correct_shehia, correct_district))
+
+#test <- filter(data, !is.na(date_fix5))
+```
+
+Remaining orphans are listed below. Those from case data likely require additional
+attention while those from the shapefile may represent an area that was free 
+of *_reported_* malaria cases. 
+
+```{r}
+
+shehia_case_1 <- data %>% 
+  group_by(district_for_shehia, shehia) %>% 
+  summarise(cases= n()) %>% 
+  left_join(map_names, by = c("district_for_shehia" = "district_n", 
+                                                 "shehia" = "shehia_nam"))
+
+map_orphans <- map_names %>% 
+  filter(!id %in% shehia_case_1$id)
+
+case_orphans <- filter(shehia_case_1, is.na(id))
+
+map_names1 <- map_names %>% 
+  mutate(dis_she_combo = paste0(district_n, "-", shehia_nam), 
+         threshold = case_when(district_n %in% c("chakechake", 
+                                    "micheweni", 
+                                    "mkoani", 
+                                    "wete") ~ 3, 
+                               district_n == "kaskazini_a" & shehia_nam %in% c("kilindi", "nungwi_bandakuu", "nungwi_kiungani")~ 5, 
+                               district_n %in% c("kaskazini_a", 
+                                                          "kaskazini_b",
+                                                          "kati", 
+                                                          "kusini") ~ 4, 
+                               district_n %in% c("magharibi_a", 
+                                                          "magharibi_b",
+                                                          "mjini") ~ 5, 
+                               .default = NA)) %>% 
+  arrange(district_n, shehia_nam)
+
+# test <- filter(map_names1, is.na(threshold))
+
+rio::export(map_names1, "shehia_threshold_all.xlsx")
+
+```
+
+There are `r nrow(map_orphans)` shehias in the shapefile without any reported
+malaria cases. 
+
+`r flextable::flextable(map_orphans)`
+
+There are `r nrow(case_orphans)` shehias in the case data not matching the 
+shehia spelling in the shapefile. 
+
+`r flextable::flextable(case_orphans)`
+
+### Mapping of censored cases
+Ideally, we would map the location of censored facilities as we would want to 
+inspect bias in removal of service access points in the analysis, but these
+data are not currently available. Instead, relative exclusion of cases is mapped
+(though they are expected to concentrate in areas with the most cases overall).
+
+```{r}
+censored_cases <- data %>% 
+  filter(!facility %in% hf_filter$facility) %>% 
+  group_by(epi_year, shehia, district_for_shehia) %>% 
+  summarise(count = n()) %>% 
+  dplyr::ungroup() %>% 
+  pivot_wider(names_from = epi_year, values_from = count) %>% 
+  rename_with(~paste0("censored_", .x), 
+              .cols = c(3:8))
+
+all_cases_sf <- data %>% 
+  filter(facility %in% hf_filter$facility) %>% 
+  group_by(epi_year, shehia, district_for_shehia) %>% 
+  summarise(count = n()) %>% 
+  dplyr::ungroup() %>% 
+  pivot_wider(names_from = epi_year, values_from = count) %>% 
+  full_join(censored_cases, by = c("district_for_shehia", 
+                                   "shehia")) %>% 
+  right_join(znz_sf, by = c("shehia" = "shehia_nam", 
+                               "district_for_shehia" = "district_n")) %>% 
+  mutate(across(c(3:15), ~replace_na(.x, 0))) %>% 
+#  select(-`2025`) %>% 
+  st_as_sf()%>% 
+  st_make_valid()
+
+
+
+
+```
+
+* 2019
+```{r out.width= 700, out.height = 700}
+tmap_mode("view")
+
+pal_case <- colorRampPalette(c("#FFFFFF", "#7A2A05"))(9)
+
+pal_censor <- colorRampPalette(c("#FFFFFF", "#0C5B74"))(5)
+
+
+
+tm_shape(all_cases_sf)+
+  tm_polygons(c("2019", "censored_2019"), 
+          title = c("Included cases", 
+                    "Censored cases"), 
+          breaks = list((breaks = c(0, 10, 50, 100, 200, 300, 400, 500, 600)), 
+          (breaks = c(0,5, 10, 15, 20, 25))),  
+       #   labels = list(labels_count, labels_perc), 
+          style = "fixed",
+          popup.vars=c("Cases: "="2019",
+                       "Excluded: " = "censored_2019"), 
+          palette = list(pal_case,pal_censor)
+        )+
+    tm_facets(sync = TRUE, ncol = 2)+
+  tm_view(view.legend.position  = c("left", "bottom"))
+
+```
+
+
+* 2020
+```{r out.width= 700, out.height = 700}
+tmap_mode("view")
+
+
+tm_shape(all_cases_sf)+
+  tm_polygons(c("2020", "censored_2020"), 
+          title = c("Included cases", 
+                    "Censored cases"), 
+          breaks = list((breaks = c(0, 10, 50, 100, 200, 300, 400, 500, 600)), 
+          (breaks = c(0, 10, 20, 30, 40, 50, 60))),  
+       #   labels = list(labels_count, labels_perc), 
+          style = "fixed",
+          popup.vars=c("Cases: "="2020",
+                    "Excluded: " = "censored_2020"), 
+          palette = list(pal_case,pal_censor)
+        )+
+    tm_facets(sync = TRUE, ncol = 2)+
+  tm_view(view.legend.position  = c("left", "bottom"))
+
+```
+
+* 2021
+```{r out.width= 700, out.height = 700}
+tmap_mode("view")
+
+
+tm_shape(all_cases_sf)+
+  tm_polygons(c("2021", "censored_2021"), 
+          title = c("Included cases", 
+                    "Censored cases"), 
+          breaks = list((breaks = c(0, 10, 50, 100, 200, 300, 400, 500, 600)), 
+          (breaks = c(0, 10, 20, 30, 40, 50, 60))),  
+       #   labels = list(labels_count, labels_perc), 
+          style = "fixed",
+          popup.vars=c("Cases: "="2021",
+                    "Excluded: " = "censored_2021"), 
+          palette = list(pal_case,pal_censor)
+        )+
+    tm_facets(sync = TRUE, ncol = 2)+
+  tm_view(view.legend.position  = c("left", "bottom"))
+
+```
+
+
+* 2022
+```{r out.width= 700, out.height = 700}
+tmap_mode("view")
+
+
+tm_shape(all_cases_sf)+
+  tm_polygons(c("2022", "censored_2022"), 
+          title = c("Included cases", 
+                    "Censored cases"), 
+          breaks = list((breaks = c(0, 10, 50, 100, 200, 300, 400, 500, 600)), 
+          (breaks = c(0, 5, 10, 15, 20, 25))),  
+       #   labels = list(labels_count, labels_perc), 
+          style = "fixed",
+          popup.vars=c("Cases: "="2022",
+                    "Excluded: " = "censored_2022"), 
+          palette = list(pal_case,pal_censor)
+        )+
+    tm_facets(sync = TRUE, ncol = 2)+
+  tm_view(view.legend.position  = c("left", "bottom"))
+
+```
+
+* 2023
+```{r out.width= 700, out.height = 700}
+tmap_mode("view")
+
+tm_shape(all_cases_sf)+
+  tm_polygons(c("2023","censored_2023"), 
+          title = c("Included cases", 
+                    "Censored cases"), 
+          breaks = list((breaks = c(0, 10, 50, 100, 200, 300, 400, 500, 600)), 
+          (breaks = c(0, 25, 50, 100, 150, 200))),  
+       #   labels = list(labels_count, labels_perc), 
+          style = "fixed",
+          popup.vars=c("Cases: "="2023",
+                    "Excluded: " = "censored_2023"), 
+          palette = list(pal_case,pal_censor)
+        )+
+    tm_facets(sync = TRUE, ncol = 2)+
+  tm_view(view.legend.position  = c("left", "bottom"))
+
+```
+
+
+* 2024
+```{r out.width= 700, out.height = 700}
+tmap_mode("view")
+
+
+tm_shape(all_cases_sf)+
+  tm_polygons(c("2024", "censored_2024"), 
+          title = c("Included cases", 
+                    "Censored cases"), 
+          breaks = list((breaks = c(0, 10, 50, 100, 200, 300, 400, 500, 600)), 
+          (breaks = c(0, 25, 50, 75, 100, 150))),  
+       #   labels = list(labels_count, labels_perc), 
+          style = "fixed",
+          popup.vars=c("Cases: "="2024",
+                    "Excluded: " = "censored_2024"), 
+          palette = list(pal_case,pal_censor)
+        )+
+    tm_facets(sync = TRUE, ncol = 2)+
+  tm_view(view.legend.position  = c("left", "bottom"))
+
+```
+
+```{r include=FALSE}
+pal_case_static <- colorRampPalette(c("#FFFFFF", "goldenrod", "#7A2A05"))(9)
+
+pal_censor_static <- colorRampPalette(c("#FFFFFF", "seagreen", "#2e145d"))(5)
+
+
+years <- list("2019", "2020", "2021", "2022", "2023", "2024")
+test <- map2(list("2019", "2020", "2021", "2022", "2023", "2024"), 
+             map(years, ~paste0("censored_",  .x)), 
+             function(.a,.b) {tm_shape(all_cases_sf)+
+  tm_polygons(c(.a, .b), 
+          title = c("Included cases", 
+                    "Censored cases"), 
+          breaks = list((breaks = c(0, 10, 50, 100, 200, 300, 400, 500, 600)), 
+          (breaks = c(0,5, 10, 15, 20, 25))),  
+          style = "fixed",
+          palette = list(pal_case_static,pal_censor_static)
+        )+
+    tm_facets(sync = TRUE, ncol = 2)
+             }
+) %>% 
+  set_names(years)
+
+test1 <- pmap(list(list("2019", "2020", "2021", "2022", "2023", "2024"), 
+             map(years, ~paste0("censored_",  .x)), 
+             list(c(0,5, 10, 15, 20, 25),
+               c(0, 10, 20, 30, 40, 50, 60),
+               c(0, 10, 20, 30, 40, 50, 60),
+               c(0, 5, 10, 15, 20, 25),
+               c(0, 25, 50, 100, 150, 200),
+               c(0, 25, 50, 75, 100, 150))),
+             function(.a,.b,.c) {tm_shape(all_cases_sf)+
+  tm_polygons(c(.a, .b), 
+          title = c("Included cases", 
+                    "Censored cases"), 
+          breaks = list((breaks = c(0, 10, 50, 100, 200, 300, 400, 500, 600)), 
+          (breaks = .c)),  
+          style = "fixed",
+          palette = list(pal_case_static,pal_censor_static)
+        )+
+    tm_facets(sync = TRUE, ncol = 2)
+             }
+) %>% 
+  set_names(years)
+
+map2(test1, 
+     map(names(test), ~paste0(here::here("pdf_report","censor_maps"), "/", .x, ".png")), 
+     ~tmap_save(tm = .x, filename = .y, 
+          dpi = 700, 
+          height = 7, 
+          width = 5, 
+          units = "in")
+)
+         
+
+
+```
+
+### Proportion of included/excluded total cases by shehia
+
+The following chart depicts the proportion of reported cases that were included
+in the analysis (blue) versus censored (grey). Hover over the chart to show the
+numbers of cases included and censored for each shehia.
+
+```{r out.width= 700, out.height = 700}
+a <- data %>% 
+  ungroup() %>% 
+  mutate(Status = case_when(fac_id %in% hf_filter$fac_id ~ "Included", 
+                   !fac_id %in% hf_filter$fac_id ~ "Censored", 
+                   .default = "error")
+         )%>% 
+  count(district_for_shehia, shehia, Status, .drop = FALSE) %>% 
+ # complete(district_for_shehia, shehia, Status, fill = list(n = 0))  %>% 
+  pivot_wider(names_from = Status, 
+              values_from = n) %>% 
+  ungroup() %>% 
+  mutate(Censored = replace_na(Censored, 0),
+         prop_cens = 100*Censored/(Censored+Included)) 
+
+b <- a %>% 
+  arrange(desc(prop_cens)) %>% 
+  mutate(order = row_number(), 
+         id = paste0(district_for_shehia, "_", shehia))
+
+a1 <- a %>% 
+  left_join(select(b, c(1,2,6,7)), 
+            by = c("district_for_shehia", "shehia")) %>% 
+#  arrange(order) %>% 
+  pivot_longer(-c(district_for_shehia, shehia, prop_cens, order, id)) %>% 
+  mutate(prop_cens = round(prop_cens, 1), 
+         id1 = factor(id, levels = b$id),
+         text = paste0("District: ", str_to_title(str_replace_all(district_for_shehia, "_", " ")), "\n",
+                       "Shehia: ", str_to_title(str_replace_all(shehia, "_", " ")), "\n",
+                       "Percent Cases Censored: ", prop_cens, "\n",
+                       "Number ", name, ": ", value)) %>% 
+  ggplot()+
+  geom_col(aes(x = id1, y = value, 
+               fill = name, 
+               group = name, 
+               color = name,
+               text = text), 
+           position = "fill")+
+    theme_minimal()+
+  scale_fill_manual(values = c("grey","darkblue"))+
+  scale_color_manual(values = c( "grey","darkblue"))+
+  theme(legend.position = "none", 
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+
+  labs(x = "Shehia", 
+       y = "Proportion of reported cases included (blue)")
+  
+
+plotly::ggplotly(a1, tooltip = "text")
+```
+
+```{r include = FALSE}
+a2 <- a %>% 
+  left_join(select(b, c(1,2,6,7)), 
+            by = c("district_for_shehia", "shehia")) %>% 
+#  arrange(order) %>% 
+  pivot_longer(-c(district_for_shehia, shehia, prop_cens, order, id)) %>% 
+  mutate(prop_cens = round(prop_cens, 1), 
+         id1 = factor(id, levels = b$id)) %>% 
+  arrange(id1)
+#  mutate(shehia1 = factor(shehia, levels = b$shehia)) %>% 
+#  arrange(shehia1) %>% 
+#  select(-shehia) %>% 
+#  pivot_longer(-c(shehia1, prop_cens)) %>% 
+#  mutate(prop_cens = round(prop_cens, 1)) 
+
+
+a3 <- ggplot(a2)+
+  geom_col(aes(x = id1, y = value, 
+               fill = name, 
+               group = name, 
+               color = name), 
+           position = "fill")+
+    theme_minimal()+
+  scale_fill_manual(values = c("grey","darkblue"))+
+  scale_color_manual(values = c( "grey","darkblue"))+
+  theme(legend.position = "none", 
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+
+  labs(x = "Shehia", 
+       y = "Proportion of reported cases included (blue)")
+
+ggsave(a3, filename = "pdf_report/shehia_prop_censored.png", 
+       height = 5, 
+       width = 7, 
+       units = "in")
+
+a4 <- filter(a2, prop_cens >= 25) %>% 
+  pivot_wider(names_from = name, values_from = value) %>% 
+  select(-c(4:6)) %>% 
+  mutate(across(c(1:2), ~str_to_title(str_replace_all(.x, "_", " "))))
+
+rio::export(a4, "most_censored_shehia.xlsx")
+
+```
+
+
+```{r}
+rm(censored_cases_sf, included_cases_sf, all_cases_sf, a4, a3, a2, a1)
+```
+
+
+```{r eval = FALSE}
+cases_censored <- data1 %>%
+  filter(!fac_id %in% hf_filter$fac_id)
+
+a <- data1 %>% 
+  group_by(facility_district) %>% 
+  distinct(facility_district, shehia)
+
+
+  summarise(n = length(unlist(list(unique(fac_id)))))
+
+```
+
+
+# Trend in subset of included facilities {.tabset .tabset-fade}
+## Nationally
+```{r out.width= 700, out.height = 700}
+
+
+agg_nat <- data %>% 
+  filter(facility %in% hf_filter$facility) %>% 
+  mutate(epi_year = lubridate::epiyear(date_fix)) %>% 
+  group_by(epi_year, epi_week) %>% 
+  summarise(cases = n()) %>% 
+  ungroup() %>% 
+  rename(Week = epi_week, 
+         Cases = cases, 
+         Year = epi_year) %>% 
+  mutate(Year = as.factor(Year))
+
+a <- ggplot(agg_nat)+
+  geom_line(aes(x = Week, y = Cases, 
+                group = Year, 
+                colour = Year))+  
+  scale_color_manual(values = c("#786060", 
+        "#486090", 
+        "#a890a8", 
+        "#a84848", 
+        "#f0a860", 
+        "#d8c0a8",  
+        "#a86030")
+  )+
+  theme_minimal()+
+  labs(x = "Epiweek", 
+       y = "Reported Cases")
+
+ggsave(a, filename = "pdf_report/national_trend_subset.png", 
+       height = 5, 
+       width = 7, 
+       units = "in")
+
+ggplotly(a)
+
+data_filtered <- data %>% 
+  filter(facility %in% hf_filter$facility)
+
+```
+
+```{r include = FALSE}
+
+rio::export(data_filtered, "data_filtered_for_tst.xlsx")
+rio::export(data, "data_unfiltered_clean.xlsx")
+#max(data_filtered$date_fix)
+```
+
+## National comparison by year {.tabset .tabset-pills}
+Grey bars are cases included in the subsequent analyses; blue-green lines are all cases listed in routine data. Note the differences in y-axis scale by year. There are no dramatic changes in the trends observed, though the magnitude of peaks is significantly decreased due to exclusion of observations in some instances.
+
+### Year 2019
+```{r message = FALSE}
+agg_nat_corrected_split <- agg_nat %>% 
+  split(.$Year)
+
+agg_nat_uncorrected_year <- data %>% 
+  mutate(epi_year = lubridate::epiyear(date_fix)) %>% 
+  group_by(epi_year, epi_week) %>% 
+  summarise(cases = n()) %>% 
+  ungroup() %>% 
+  rename(Week = epi_week, 
+         Cases = cases, 
+         Year = epi_year) %>% 
+  mutate(Year = as.factor(Year)) %>% 
+  split(.$Year)
+
+
+annual_comp <- map2(agg_nat_uncorrected_year, 
+                    agg_nat_corrected_split, 
+                    ~ggplot()+
+                      geom_col(data = .x, aes(x = Week, y = Cases), 
+                               fill = "grey",
+                               color = "grey20")+
+                      geom_col(data = .y, aes(x = Week, y = Cases), fill = "darkblue", 
+                               color = "grey20")+
+  theme_minimal()+
+  labs(x = "Epiweek", 
+       y = "Reported Cases"))
+```
+
+```{r include=FALSE}
+
+map2(annual_comp, 
+     map(list("2019", "2020", "2021", "2022", "2023", "2024"), 
+         ~paste0(here::here("pdf_report", "all_subset_comp"), "/", .x, ".png")), 
+     function(a,b){ggsave(plot = a, 
+             filename = b, 
+             width = 7, 
+             height = 5, 
+             units = "in")}
+)
+
+```
+
+
+```{r include = FALSE}
+
+
+
+
+#  week_year <- data %>% 
+#    ungroup() %>% 
+#    distinct(epi_year, epi_week) %>% 
+#    filter(epi_week == 53) %>% 
+#    arrange(epi_year, epi_week)
+
+agg_nat_corrected_split_dist <- data %>% 
+  filter(facility %in% hf_filter$facility) %>% 
+  mutate(epi_year = lubridate::epiyear(date_fix)) %>% 
+ # count(district_for_shehia, epi_year, epi_week) %>% 
+  group_by(district_for_shehia, epi_year, epi_week) %>%
+  summarise(cases = n()) %>% 
+  ungroup() %>% 
+  complete(district_for_shehia, epi_year, epi_week, fill = list(cases = 0)) %>% 
+  mutate(cases = case_when(epi_week == 53 & epi_year %in% c(2019, 2021, 
+                                                            2022, 2023, 
+                                                            2024) & cases == 0 ~ NA, 
+                           .default = cases)) %>% 
+  drop_na(cases) %>% 
+  rename(Week = epi_week, 
+         Cases = cases, 
+         Year = epi_year) %>% 
+  mutate(Year = as.factor(Year)) %>% 
+  group_by(district_for_shehia) %>%  
+  mutate(time = row_number()) %>% 
+  ungroup() %>% 
+  split(.$district_for_shehia)
+
+
+
+agg_nat_uncorrected_year_district <- data %>% 
+  mutate(epi_year = lubridate::epiyear(date_fix)) %>% 
+  group_by(district_for_shehia, epi_year, epi_week) %>% 
+  summarise(cases = n()) %>% 
+  ungroup() %>% 
+  complete(district_for_shehia, epi_year, epi_week, fill = list(cases = 0)) %>% 
+  mutate(cases = case_when(epi_week == 53 & epi_year %in% c(2019, 2021, 
+                                                            2022, 2023, 
+                                                            2024) & cases == 0 ~ NA, 
+                           .default = cases)) %>% 
+  drop_na(cases) %>% 
+  rename(Week = epi_week, 
+         Cases = cases, 
+         Year = epi_year) %>% 
+  mutate(Year = as.factor(Year)) %>% 
+  group_by(district_for_shehia) %>%  
+  mutate(time = row_number()) %>% 
+  ungroup() %>% 
+  split(.$district_for_shehia)
+
+#weeks_years <- agg_nat_uncorrected_year_district[[1]] %>% 
+#  distinct(time, Year)
+
+annual_comp_districts <- pmap(list(agg_nat_uncorrected_year_district, 
+                    agg_nat_corrected_split_dist, 
+                    names(agg_nat_corrected_split_dist)),
+                    function(a,b, c){
+                      y_axes <- max(a$Cases)+ 5
+                      top <- ggplot()+
+                      annotate("rect", xmin = 0, xmax = 52, 
+                          ymin = 0, 
+                          ymax = Inf,
+                          fill = "white", 
+                          alpha = 0.2
+                          )+
+                      annotate("rect", xmin = 52, xmax = 105, 
+                          ymin = 0, 
+                          ymax = Inf,
+                          fill = "cadetblue3", 
+                          alpha = 0.2
+                          )+
+                      annotate("rect", xmin = 105, xmax = 157, 
+                          ymin = 0, 
+                          ymax = Inf,
+                          fill = "white", 
+                          alpha = 0.2
+                          )+
+                     geom_col(data = filter(a, Year %in% c("2019", "2020", "2021")),
+                                            aes(x = time, y = Cases), 
+                               fill = "grey",
+                               color = "grey20")+
+                      geom_col(data = filter(b, Year %in% c("2019", "2020", "2021")),
+                               aes(x = time, y = Cases), fill = "darkblue", 
+                               color = "grey20")+
+                       theme_minimal()+ 
+                        coord_cartesian(ylim = c(0, y_axes))+
+                       labs(x = element_blank(), 
+                            y = "Reported Cases", 
+                            title = str_to_title(str_replace_all(c, "_", " "))
+                            )
+                    
+                    bottom <- ggplot()+
+                      annotate("rect", xmin = 158, xmax = 210, 
+                          ymin = 0, 
+                          ymax = Inf,
+                          fill = "cadetblue3", 
+                          alpha = 0.2
+                          )+
+                      annotate("rect", xmin = 210, xmax = 261, 
+                          ymin = 0, 
+                          ymax = Inf,
+                          fill = "white", 
+                          alpha = 0.2
+                          )+
+                      annotate("rect", xmin = 261, xmax = 313, 
+                          ymin = 0, 
+                          ymax = Inf,
+                          fill = "cadetblue3", 
+                          alpha = 0.2
+                          )+
+                     geom_col(data = filter(a, Year %in% c("2022", "2023", "2024")),
+                              aes(x = time, y = Cases), 
+                               fill = "grey",
+                               color = "grey20")+
+                      geom_col(data = filter(b, Year %in% c("2022", "2023", "2024")),
+                               aes(x = time, y = Cases), fill = "darkblue", 
+                               color = "grey20")+
+                       theme_minimal()+ 
+                      coord_cartesian(ylim = c(0, y_axes))+
+                       labs(x = "Epiweek", 
+                            y = "Reported Cases")
+                    
+                    cowplot::plot_grid(top, bottom, ncol = 1, align = "hv", 
+                                       axis = "tblr")
+                    }
+  )
+
+map2(annual_comp_districts, 
+     map(names(agg_nat_corrected_split_dist), 
+         ~paste0(here::here("pdf_report", "district_comp"), "/", .x, ".png")), 
+     function(a,b){ggsave(plot = a, 
+             filename = b, 
+             width = 10, 
+             height = 8, 
+             units = "in")}
+)
+
+```
+
+
+```{r}
+
+annual_comp[[1]]
+
+```
+
+### Year 2020
+```{r message = FALSE}
+annual_comp[[2]]
+```
+
+### Year 2021
+```{r message = FALSE}
+annual_comp[[3]]
+```
+
+### Year 2022
+```{r message = FALSE}
+annual_comp[[4]]
+```
+
+### Year 2023
+```{r message = FALSE}
+annual_comp[[5]]
+```
+
+### Year 2024
+```{r message = FALSE}
+annual_comp[[6]]
+```
+
+## Decomposition of observed trend in data subset
+
+The classical decomposition is re-run on data from the subset of facilities and
+produces essentially the same pattern. Interestingly, there appears to be a 
+local peak essentially every month.
+
+```{r}
+data_agg_filter <- data_filtered %>% 
+  ungroup() %>% 
+  mutate(x_epiweek = yearweek(date_fix, week_start = 1)) %>% 
+  filter(lubridate::epiyear(date_fix) <= 2022) %>% 
+  count(x_epiweek, .drop = FALSE) %>% 
+  tsibble(index = x_epiweek)
+
+
+test <- data_agg_filter %>% 
+  # using an additive classical decomposition model
+  model(classical_decomposition(n, type = "additive")) %>% 
+  ## extract the important information from the model
+  components()
+
+
+b <- map(list("n", 
+     "trend", 
+     "seasonal", 
+     "random"), 
+         function(.x){z = sym(.x)
+         if (z == "random"){
+         ggplot(test)+
+  geom_line(aes(x = x_epiweek, y = {{z}}))+
+  theme_minimal()+
+           labs(x = "Epi Week", 
+                y = paste0(str_to_title(z)))}
+          else{ggplot(test)+
+  geom_line(aes(x = x_epiweek, y = {{z}}))+
+  theme_minimal()+
+           labs(y = paste0(str_to_title(z)))+
+           theme(axis.title.x=element_blank(),
+                   axis.text.x=element_blank(),
+                   axis.ticks.x=element_blank())}
+         }
+)
+
+decomp_subset <- cowplot::plot_grid(plotlist = b, 
+                                    align = "hv", 
+                                    axis = "tblr", 
+                                    ncol = 1)
+
+ggsave(decomp_subset, filename = "pdf_report/decomp_subset.png", 
+       height = 5, 
+       width = 7, 
+       units = "in")
+
+decomp_subset
+
+```
+

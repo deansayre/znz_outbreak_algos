@@ -1,0 +1,457 @@
+---
+title: "Performance of WHO algorithms -- Shehia level"
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows
+   # theme: paper
+    source_code: embed
+#runtime: shiny
+---
+
+```{r setup, include=FALSE}
+
+
+library(stringr)
+library(flexdashboard)
+library(leaflet)  # interative mapping
+library(DT)  # interactive tables
+library(crosstalk)  # inter-widget interactivity
+library(tidyverse)  # tidy data manipulation
+
+znz_sf <- sf::st_read("Zanzibar Shehia_Refactored_11012021.shp", quiet = TRUE) %>% 
+   linelist::clean_data(guess_dates = FALSE) %>%  
+    mutate(district = word(region_nam, 1, sep = "_")) %>% 
+#   mutate(District = str_to_title(str_replace_all(district_n, "_", " ")), 
+#          Shehia = str_to_title(str_replace_all(shehia_nam, "_", " "))) %>% 
+  sf::st_make_valid() %>% 
+  sf::st_cast("POLYGON") %>% 
+  sf::st_centroid() %>% 
+  select(district_n, shehia = shehia_nam) %>% 
+  sf::st_cast("POINT")
+
+coords <- sf::st_coordinates(znz_sf) %>% 
+  as.data.frame()
+ 
+znz_sf1 <- sf::st_drop_geometry(znz_sf) %>% 
+  bind_cols(coords)
+
+dash_data_a <- rio::import_list("shehia_metrics_all.xlsx") %>% 
+  list_rbind(names_to = "algo") %>% 
+ # pivot_wider(names_from = algo, values_from = c(4:17)) %>% 
+  mutate(id = paste0(district, "_", shehia, "_", algo, "_all_all"), 
+         classification = "All", 
+         evaluation_set = "All")  
+
+dash_data_b <- rio::import_list("shehia_metrics_all_local.xlsx") %>% 
+  list_rbind(names_to = "algo") %>% 
+ # pivot_wider(names_from = algo, values_from = c(4:17)) %>% 
+  mutate(id = paste0(district, "_", shehia, "_", algo, "_local_all"), 
+         classification = "Local", 
+         evaluation_set = "All") 
+
+dash_data_c <- rio::import_list("shehia_metrics_all_reporting_subset.xlsx") %>% 
+  list_rbind(names_to = "algo") %>% 
+ # pivot_wider(names_from = algo, values_from = c(4:17)) %>% 
+  mutate(id = paste0(district, "_", shehia, "_", algo,"_all_subset"), 
+         classification = "All", 
+         evaluation_set = "Subset")  
+
+dash_data_d <- rio::import_list("shehia_metrics_all_reporting_subset_local.xlsx") %>% 
+  list_rbind(names_to = "algo") %>% 
+ # pivot_wider(names_from = algo, values_from = c(4:17)) %>% 
+  mutate(id = paste0(district, "_", shehia, "_", algo, "local_subset"), 
+         classification = "Local", 
+         evaluation_set = "Subset") 
+
+data_island <- rio::import("deduped_unfiltered_data.xlsx") %>% 
+  select(island, facility_district, district_for_shehia) %>% 
+  count(island, facility_district, district_for_shehia)
+
+
+dash_data <- bind_rows(dash_data_a, dash_data_b, dash_data_c, dash_data_d) %>% 
+  select(-c(weeks, no_call, no_call_outbreak, num_outbreak)) %>% 
+  mutate(island = case_when(district %in% c("chakechake", 
+                                            "micheweni",
+                                            "mkoani",
+                                            "wete") ~ "Pemba", 
+                            district %in% c("kaskazini_a",
+                                            "kaskazini_b", 
+                                            "kati", 
+                                            "kusini", 
+                                            "magharibi_a", 
+                                            "magharibi_b", 
+                                            "mjini") ~ "Unguja",
+                            .default = "Error"), 
+         algo = case_when(algo == "who_2sd" ~ "Mean + 2 SD", 
+                          algo == "who_75" ~ "75th percentile", 
+                          algo == "who_csum" ~ "C-SUM", 
+                          .default = "error"),
+           across(c(2,3), ~str_to_title(str_replace_all(.x, "_", " ")))) %>% 
+  relocate(algo, .after = last_col())
+
+#%>% 
+#  select(-c(Weeks, Id)) %>% 
+#  left_join(znz_sf, by = c("District", "Shehia")) %>% 
+#  mutate(id = paste0(District, "_", Shehia)) %>% 
+#  sf::st_as_sf() %>% 
+#  sf::st_make_valid()
+#
+
+data_share <- SharedData$new(dash_data, key = ~id, group = "group1")
+data_share_2sd <- SharedData$new(dash_data[dash_data$algo == "Mean + 2 SD",], 
+                                   key = ~id, group = "group1")
+data_share_75 <- SharedData$new(dash_data[dash_data$algo == "75th percentile",], 
+                                  key = ~id, group = "group1")
+data_share_csum <- SharedData$new(dash_data[dash_data$algo == "C-SUM",], 
+                                    key = ~id, group = "group1")
+
+
+
+```
+
+Interactives {data-icon="ion-stats-bars"}
+=====================================  
+Inputs {.sidebar}
+-------------------------------------
+### Case Classification and Geography
+
+```{r }
+
+
+
+filter_select(id = "local", 
+              label = "Case classification", 
+              sharedData = data_share, 
+              multiple = FALSE,
+              ~classification)
+
+filter_select(id = "evaluation_set", 
+              label = "WHO Algorithm input", 
+              sharedData = data_share, 
+              multiple = FALSE,
+              ~evaluation_set)
+
+filter_select(id = "island", 
+              label = "Island", 
+              sharedData = data_share, 
+              multiple = FALSE,
+              ~island)
+
+filter_select(id = "district",
+              label = "District",
+              sharedData = data_share,
+              ~district)
+
+
+filter_slider(id = "prob_ever",
+              label = "Outbreak Detected Ever (%)",
+              sharedData = data_share,
+              ~prob_ever_detected)
+
+filter_slider(id = "prob_first",
+              label = "Outbreaks Detected First Week (%)",
+              sharedData = data_share,
+              ~prob_first_week)
+
+
+filter_slider(id = "sensitivity_epi",
+              label = "Sensitivity - Epiweek (%)",
+              sharedData = data_share,
+              ~sens)
+
+filter_slider(id = "false_pos",
+              label = "False Positive - Epiweek (%)",
+              sharedData = data_share,
+              ~false_pos)
+
+filter_slider(id = "ppv",
+              label = "Positive Predictive Value - Epiweek (%)",
+              sharedData = data_share,
+              ~ppv)
+
+
+
+```
+
+```{js}
+function remove_all_option() {
+    document.getElementById("local").getElementsByClassName("selectized")[0].selectize.removeOption("");
+}
+
+function remove_all_option_district() {
+    document.getElementById("district").getElementsByClassName("selectized")[0].selectize.removeOption("");
+}
+
+function remove_all_option_eval() {
+    document.getElementById("evaluation_set").getElementsByClassName("selectized")[0].selectize.removeOption("");
+}
+
+function filter_default() {
+    document.getElementById("local").getElementsByClassName("selectized") 
+[0].selectize.setValue("All", false);
+ }
+ 
+ function filter_default_eval() {
+    document.getElementById("evaluation_set").getElementsByClassName("selectized") 
+[0].selectize.setValue("All", false);
+ }
+ 
+ 
+ 
+ 
+ 
+ $(document).ready(function () {
+  filter_default();
+  filter_default_eval();
+  remove_all_option();
+  remove_all_option_district();
+  remove_all_option_eval();
+});
+
+
+```
+
+
+Row 
+-------------------------------------
+### Number of Shehia Meeting criteria
+```{r}
+
+
+ plotly::plot_ly(data = data_share, 
+                 x = ~ algo, 
+                 type = "histogram")%>% 
+  plotly::layout(xaxis = list(title = 'WHO Algorithm'))
+ 
+```
+
+### Mean + 2 SD
+```{r }
+
+a <- 1:15
+keep <- c(1:11)
+
+b <- data_share_2sd %>% 
+  datatable(rownames = FALSE,
+                 colnames = c('District', 'Shehia', 'Epiweeks Outbreak (n)',
+                              'Epiweeks Routine (n)', 'Number Outbreaks (n)', 
+                              'False Positive Epiweeks (%)', 
+                              'Epiweek Sensitiviy (%)', 'Epiweek Specificity (%)',
+                              'Epiweek PPV (%)', 'Epiweek NPV (%)',
+                              'Outbreaks Detected on First Week (%)',
+                              'Outbreaks Ever Detected (%)'),
+                    options = list(
+                      columnDefs = list(list(visible=FALSE, targets = a[! a %in% keep])),
+                      dom = 'ritp'))
+                    
+
+b
+```
+
+
+
+
+Row 
+-------------------------------------
+### 75th percentile
+```{r}
+
+ 
+
+b <-  data_share_75 %>% 
+   datatable(rownames = FALSE,
+                 colnames = c('District', 'Shehia', 'Epiweeks Outbreak',
+                              'Epiweeks Routine', 'Number Outbreaks', 
+                              'False Positive Epiweeks', 
+                              'Epiweek Sensitiviy', 'Epiweek Specificity',
+                              'Epiweek PPV', 'Epiweek NPV',
+                              'Outbreaks Detected Week 1',
+                              'Outbreaks Ever Detected'),
+                   # extensions = 'Buttons',
+                    options = list(
+                      columnDefs = list(list(visible=FALSE, targets = a[! a %in% keep])),
+                      dom = 'ritp'
+                    #  buttons = "excel"))
+                    ))
+
+b
+```
+
+### C-SUM
+```{r}
+
+
+data_share_csum %>% 
+   DT::datatable(rownames = FALSE,
+                 colnames = c('District', 'Shehia', 'Epiweeks Outbreak (n)',
+                              'Epiweeks Routine (n)', 'Number Outbreaks (n)', 
+                              'False Positive Epiweeks (%)', 
+                              'Epiweek Sensitiviy (%)', 'Epiweek Specificity (%)',
+                              'Epiweek PPV (%)', 'Epiweek NPV (%)',
+                              'Outbreaks Detected on First Week (%)',
+                              'Outbreaks Ever Detected (%)'),
+                    options = list(
+                      columnDefs = list(list(visible=FALSE, targets = a[! a %in% keep])),
+                      dom = 'ritp'))
+
+#   datatable(filter = 'top',
+#                     extensions = 'Buttons',
+#                     options = list(
+#                                 paging = TRUE,
+#                                 searching = TRUE,
+#                                 fixedColumns = TRUE,
+#                                 autoWidth = TRUE,
+#                                 ordering = TRUE,
+#                                 dom = 'tB',
+#                                 buttons = c('excel'))
+#                     )
+```
+
+
+Data download {data-orientation=rows data-icon="fa-file-arrow-down"}
+===================================== 
+```{r}
+data_share %>% 
+  datatable(rownames = FALSE, 
+            colnames = c('District', 'Shehia', 
+                         'Epiweeks Outbreak (n)',
+                         'Epiweeks Routine (n)',
+                         'Number Outbreaks (n)', 
+                              'False Positive Epiweeks (%)', 
+                              'Epiweek Sensitiviy (%)', 'Epiweek Specificity (%)',
+                              'Epiweek PPV (%)', 'Epiweek NPV (%)',
+                              'Outbreaks Detected on First Week (%)',
+                              'Outbreaks Ever Detected (%)', 
+                         'Case Classification*',
+                         'WHO Input',
+                         'Island', 
+                         'WHO Algorithm'),
+            extensions = 'Buttons',
+                    options = list(
+                      columnDefs = list(list(visible=FALSE, targets = c(12))),
+                      dom = 'Britp',
+                      buttons = "excel")
+  )
+```
+
+How to use {data-orientation=rows data-icon="fa-info-circle"}
+===================================== 
+
+The intent of this dashboard is to provide insight into which shehias may be 
+viable options for the implementation of WHO-recommended algorithms for outbreak
+monitoring. We understand that the goal of the program is to implement outbreak
+detection schemes at the lowest organizational level possible and agree with this
+approach as malaria outbreaks can be very focal. However, we also understand
+that algorthim-based approaches are not feasible or appropriate for all shehias
+in Zanzibar, as the low malaria burden and limited personnel/resources in some 
+areas require a more practical approach. 
+
+
+Users may simultaneously apply multiple filters across the dataset to determine
+how many, and the identity of the shehias in which different algorithms are 
+performing well, or alternatively not well.
+
+### Interactives
+#### Inputs
+The bar on the left-hand side of the 'Interactives' tab allows users to enter 
+characteristics of interest. 'Case classification' allows the the user to examine
+the performance of WHO-recommended algorithms when _either_ all reported malaria
+cases are consider, or only cases that were not determined to be imported are included. 
+Note that in the case-based database, there are several designations with the 
+following distribution:
+
+* Imported - 19806
+* In progress - 3899
+* Indigenous - 37515
+* Induced - 196
+* Introduced - 666
+* Lost to followup - 2015
+* Relapse - 54
+* Relapsing - 20
+* Unclassified - 1073
+
+For the purposes of this classification 'Local' are those that are classified as
+anything _other_ than imported and introduced. 
+
+'WHO Algorithm Input' allows the user to determine which dataset is used by the 
+WHO-recommended algorithms. Part of this exercise involved censoring cases in 
+the routine data that appeared to come from facilities that did not consistently
+report cases over time. As reporting bias can have a large effect on trends in 
+case counts, only cases from consistently reporting facilities were used in the 
+gold-standard definition of outbreaks. By default, assessment of WHO algorithms
+was done by inputting _all_ available case data as this is more likely to be a
+reflection of true performance without an extensive data cleaning effort. However,
+this option allows the user to determine how WHO algorithms would perform after
+benefiting from a rigorous data cleaning, a type of "best-case" scenario.
+
+'Island' and 'District' filters reflect the geographic characteristics of the 
+case; 'District' allows selection of multiple districts.
+
+The slider filters allow the user to selectively view shehias by the performance
+of WHO-recommended outbreak detection algorithms there. Five performance-based
+filters are available, all of which are displayed as a percentage. Numerators and
+denominators for each are listed below: 
+
+* Outbreak Detected Ever - Number of true outbreaks occurring in the shehia for 
+which the WHO-recommended algorithm detected _at least_ one anomalous epiweek
+during its duration divided by number of distinct true outbreaks occurring in 
+the shehia
+
+* Outbreak Detected First Week - Number of true outbreaks occurring in the shehia for 
+which the WHO-recommended algorithm detected an anomalous epiweek on
+_its first week_ divided by number of distinct true outbreaks occurring in 
+the shehia.
+
+* Sensitivity Epiweek - The number of epiweeks in the shehia that were both
+part of a true outbreak and detected by the WHO-algorithm divided by the number
+of epiweeks in the shehia that were part of a true outbreak.
+
+* False Positive Epiweek - The number of epiweeks in the shehia that were both
+flagged by the WHO-algorithm as an anomaly but were _not_ part of a true 
+outbreak divided by the number of epiweeks in the shehia that were _not_ part 
+of a true outbreak.
+
+* Positive Predictive Value Epiweek - The number of epiweeks in the shehia that 
+were both part of a true outbreak and detected by the WHO-algorithm divided by the number
+of epiweeks that were flagged by the WHO-algorithm as anomalous.
+
+#### Outputs
+The bar chart in the upper left panel shows the number of shehias that match the 
+criteria entered by the user in the left-hand panel. Though this graph was made
+with coding that allows for interactivity, we recommend not attempting to click 
+or filter using this graph as this does not add functionality to the tables and
+will likely only present a confusing display.
+
+Each table displays the shehias matching the criteria in the left-hand filter
+panel. A count of the entries included in each is present just below its title;
+however, note that the number of total entries is provided parenthetically and
+that this number represents the total number of rows present in the overall 
+dataset _not_ the number of shehias for which there are data. Each shehia has 
+_multiple_ rows to corresponding the different scenarios available (local cases 
+vs. all cases, data from consistent reporters only vs. all data, etc.). 
+Definitions of columns are identical to those above with some additions.
+'Epiweeks outbreak' shows the number of epiweeks in each shehia when a true 
+outbreak was ongoing according to the gold-standard definition in this exercise'
+'Epiweeks routine' displays the number of epiweeks in each shehia that did not 
+meet the definition of an outbreak provided in other files. 
+
+### Data Download
+All data matching the criteria entered in the filter sidebar are displayed here.
+Note that each row corresponds to a location and algorithm _combination_, so it
+is possible for each shehia to appear as many as three times. 
+
+The intended purpose of the table is to enable the user to download the data of
+interest (expressed through the filters) for comparison and deeper analysis. 
+Clicking the grey button labeled 'Excel' in the upper left-hand corner will open
+a prompt allowing the data to be saved as an Excel spreadsheet. Note that the 
+default filename provided will be "Performance of WHO algorithms -- Shehia level.xlsx".
+If more than one such file with different filters is applied is downloaded, it is
+recommended to provide additional information in the filename. At the very least, 
+the names must be changed with subsequent downloads, or the files of interest will
+be overwritten. 
+
+Consistent with above, one additional column labeled 'id' that is not shown in 
+the table will be present in the xlsx file. These data are simply a concatenation 
+of district, shehia, case classification, and WHO algorithm, which served as a
+handle for creation of the linked outputs on the 'Interactives' tab.
+

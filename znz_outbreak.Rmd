@@ -1,0 +1,1234 @@
+---
+title: "Detection of malaria outbreaks in Zanzibar using routine data"
+date: "`r format(Sys.time(), '%A %d %B %Y')`"
+#runtime: shiny
+output:
+  html_document:
+    code_folding: hide
+    code_download: true
+    highlight: zenburn
+    number_sections: no
+    theme: spacelab
+    toc: no
+    css: C:/Users/omp2/OneDrive - CDC/zanzibar/znz_data/style.css
+    includes:
+      in_header: header.html
+---
+
+<div class="watermark">PRELIMINARY</div>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, 
+                      warning = FALSE, 
+                      message = FALSE, 
+                      fig.dim = c(10, 8))
+```
+
+#  {.tabset .tabset-fade}
+
+## **Set up** {.tabset .tabset-pills}
+### Package attachment
+Session information is provided below, including attached packages.
+```{r}
+rm(list = ls())
+
+pacman::p_load(rio, 
+               sf, 
+               tmap, 
+               geodata, 
+               tsibble,
+               plotly,
+               surveillance,
+               tidyverse)
+
+pacman::p_load_gh("reconhub/linelist")
+
+sessionInfo()
+
+```
+
+### Data importation
+Data cleaned and filtered in znz_explore.Rmd and farrington_thresholds.R are 
+imported here. 
+```{r}
+
+
+data <- rio::import("deduped_unfiltered_data.xlsx") %>%  # 65244 obs
+  select(-date_fix) %>% 
+  rename(date_fix = date)
+
+data_filtered <- rio::import("data_filtered_for_tst.xlsx")
+
+
+filtered_district_alerts <- rio::import("filtered_district_alert_alpha_1.xlsx")
+
+filtered_district_alerts_alpha01 <- rio::import("filtered_district_alert_alpha_01.xlsx")
+
+filtered_district_alerts_alpha1_w3 <- rio::import("filtered_district_alert_alpha_1_w3.xlsx")
+
+#zamep_overwrite <- rio::import("zamep_overwrite.xlsx")
+zamep_overwrite <- rio::import("zamep_overwrite_1.xlsx")
+
+
+shehia_interest <- rio::import("zamep_overwrite.xlsx", which = 2) %>% 
+  Rtesunate::act_clean() %>% 
+  mutate(district = str_replace_all(district, "\\.", "_"), 
+         district_shehia = paste0(district, "-", shehia))
+
+filtered_shehia_alerts <- rio::import("filtered_shehia_alert_alpha_1.xlsx")
+
+
+
+znz_sf <- sf::st_read("Zanzibar Shehia_Refactored_11012021.shp", quiet = TRUE) %>% 
+  clean_data(guess_dates = FALSE) %>% 
+  st_as_sf()
+
+```
+
+
+## **Anomalous counts - all** {.tabset .tabset-pills}
+
+### Chakechake
+```{r message=FALSE}
+dist_shehia <- znz_sf %>% 
+  select(district_n, shehia_nam) %>% 
+  sf::st_drop_geometry()
+
+filtered_shehia_alerts1 <- filtered_shehia_alerts %>% 
+  select(-all_of(starts_with("population"))) %>% 
+  select(-all_of(starts_with("state")))%>% 
+  select(-all_of(starts_with("alarm"))) %>% 
+  pivot_longer(-epoch) %>% 
+  mutate(type = word(name, 1, sep = "\\."), 
+         district_shehia = word(name, 2, sep = "\\.")) %>% 
+  select(-name) %>% 
+  left_join(., ., by = c("epoch", "district_shehia")) %>% 
+  filter(type.x == "observed" & type.y == "upperbound") %>% 
+  mutate(alert = value.x > value.y, 
+         outbreak_mag = case_when(alert == TRUE ~ value.x - value.y, 
+                               .default = NA_real_)) %>% 
+  rename(observed = value.x, 
+         threshold = value.y, 
+         week = epoch) %>% 
+  select(-c(type.x, type.y)) %>% 
+  arrange(district_shehia, week) %>% 
+  group_by(district_shehia) %>% 
+  mutate(geo_week = row_number(), 
+         two_or_more = case_when((lag(alert) == TRUE & alert == TRUE) |
+                                   (lead(alert) == TRUE & alert == TRUE) ~ TRUE, 
+                                 .default = FALSE),
+         absolute_mag = case_when(outbreak_mag > 4 ~ TRUE, 
+                                  outbreak_mag <= 4 ~ FALSE, 
+                                  .default = NA), 
+         relative_mag = case_when(alert == FALSE ~ NA,
+                                  observed/threshold >= 3 ~ TRUE, 
+                                  observed/threshold < 3 ~ FALSE, 
+                                  .default = NA),
+         defcon1 = case_when(alert == FALSE ~ "grey", 
+                            alert == TRUE & (absolute_mag == TRUE | relative_mag == TRUE) & two_or_more == TRUE ~ "firebrick4",
+                            .default = "grey"),
+         first_in_run = case_when(alert == TRUE & lag(alert) == FALSE ~ week, 
+                                  .default = NA)) %>% 
+  fill(first_in_run, .direction = "down") %>% 
+  ungroup() %>% 
+  mutate(first_in_run = ifelse(alert == TRUE, first_in_run, NA)) %>% 
+  group_by(district_shehia, first_in_run) %>% 
+  mutate(any_defcon = ifelse(alert == TRUE, list(defcon1), NA)) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(ever_exceeded = "firebrick4" %in% any_defcon, 
+          defcon2 = case_when(ever_exceeded == TRUE ~ "firebrick4", 
+                              .default = "grey")) %>% 
+  ungroup() %>% 
+  mutate(district = word(district_shehia, 1, sep = "-"), 
+         shehia = word(district_shehia, 2, sep = "-"))
+
+filtered_district_threshold_01 <- filtered_district_alerts_alpha01 %>% 
+  select(epoch, starts_with("upperbound")) %>% 
+  pivot_longer(-epoch) %>% 
+  mutate(district = word(name, 2, sep = "\\.")) %>% 
+  select(-name) %>% 
+  rename(threshold_01 = value)
+
+
+filtered_district_threshold_w3 <- filtered_district_alerts_alpha1_w3 %>% 
+  select(epoch, starts_with("upperbound")) %>% 
+  pivot_longer(-epoch) %>% 
+  mutate(district = word(name, 2, sep = "\\.")) %>% 
+  select(-name) %>% 
+  rename(threshold_w3 = value)
+
+
+
+filtered_distict_alerts1 <- filtered_district_alerts %>% 
+  select(-all_of(starts_with("population"))) %>% 
+  select(-all_of(starts_with("state")))%>% 
+  select(-all_of(starts_with("alarm"))) %>% 
+  pivot_longer(-epoch) %>% 
+  mutate(type = word(name, 1, sep = "\\."), 
+         district = word(name, 2, sep = "\\.")) %>% 
+  select(-name) %>% 
+  left_join(., ., by = c("epoch", "district")) %>% 
+  filter(type.x == "observed" & type.y == "upperbound") %>% 
+  mutate(alert = value.x > value.y, 
+         outbreak_mag = case_when(alert == TRUE ~ value.x - value.y, 
+                               .default = NA_real_)) %>% 
+  left_join(filtered_district_threshold_01, by = c("epoch", "district")) %>% 
+  left_join(filtered_district_threshold_w3, by = c("epoch", "district")) %>% 
+  rename(observed = value.x, 
+         threshold = value.y, 
+         week = epoch) %>% 
+  select(-c(type.x, type.y)) %>% 
+  arrange(district, week) %>% 
+  group_by(district) %>% 
+  mutate(geo_week = row_number(), 
+         two_or_more = case_when((lag(alert) == TRUE & alert == TRUE) |
+                                   (lead(alert) == TRUE & alert == TRUE) ~ TRUE, 
+                                 .default = FALSE),
+         absolute_mag = case_when(outbreak_mag > 4 ~ TRUE, 
+                                  outbreak_mag <= 4 ~ FALSE, 
+                                  .default = NA), 
+         relative_mag = case_when(alert == FALSE ~ NA,
+                                  observed/threshold >= 3 ~ TRUE, 
+                                  observed/threshold < 3 ~ FALSE, 
+                                  .default = NA), 
+         defcon1 = case_when(alert == FALSE ~ "grey", 
+                            alert == TRUE & (absolute_mag == TRUE | relative_mag == TRUE) & two_or_more == TRUE ~ "firebrick4", 
+                            .default = "grey"),
+         first_in_run = case_when(alert == TRUE & lag(alert) == FALSE ~ week, 
+                                  .default = NA)) %>% 
+  fill(first_in_run, .direction = "down") %>% 
+  ungroup() %>% 
+  mutate(first_in_run = ifelse(alert == TRUE, first_in_run, NA)) %>% 
+  group_by(district, first_in_run) %>% 
+  mutate(any_defcon = ifelse(alert == TRUE, list(defcon1), NA)) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(ever_exceeded = "firebrick4" %in% any_defcon, 
+          defcon2 = case_when(ever_exceeded == TRUE ~ "firebrick4", 
+                              .default = "grey")) %>% 
+  ungroup() %>% 
+  left_join(select(zamep_overwrite, c("week", "district",
+                                      "Outbreak remark (YES/NO)")), 
+            by = c("district", "week")) %>% 
+  mutate(color_fill = case_when(defcon2 == "grey" & `Outbreak remark (YES/NO)` == "YES" ~ "#cd7a26", 
+                           defcon2 == "firebrick4" & `Outbreak remark (YES/NO)` == "NO" ~ "grey20", 
+                           .default = defcon2))
+
+
+
+
+alarm_district <- map(c(sort(unique(filtered_distict_alerts1$district))), 
+                      ~filtered_distict_alerts1 %>% 
+                        filter(district == .x)) %>% 
+  set_names(c(sort(unique(filtered_distict_alerts1$district))))
+
+
+alarm_shehia <- map(c(sort(unique(filtered_shehia_alerts1$district))), 
+                      ~filtered_shehia_alerts1 %>% 
+                        filter(district == .x)) %>% 
+  set_names(c(sort(unique(filtered_shehia_alerts1$district))))
+
+
+b <- pmap(list(alarm_district, 
+               alarm_shehia,
+          sort(unique(filtered_shehia_alerts1$district))),
+              # sort(unique(filtered_shehia_alerts1$district_n))), 
+          function(a,b,c){top_panel <- a %>% 
+            as_tibble() %>% 
+ #           mutate(alarm_1 = factor(case_when(alert == TRUE ~ 1, 
+#                             .default = 0))) %>% 
+            ggplot()+
+            geom_col(aes(x = week, y = observed, fill = color_fill))+
+            scale_fill_identity()+
+            geom_line(aes(x = week, y = threshold), 
+                      col='cadetblue',
+                      linetype = "dotdash", 
+                      lwd = 1)+
+            geom_line(aes(x = week, y = threshold_01), 
+                      col='#3b5d61',
+                      linetype = "dotdash", 
+                      lwd = 0.7)+
+            geom_line(aes(x = week, y = threshold_w3), 
+                      col='#a2c4c9',
+                      linetype = "dotdash", 
+                      lwd = 0.7)+
+            theme_minimal()+
+            theme(legend.position = "none", 
+                  axis.title.x=element_blank(),
+                  axis.text.x=element_blank(),
+                  axis.ticks.x=element_blank())+
+            labs(title = str_to_title(str_replace_all(c, "_", " ")), 
+                 x = element_blank(), 
+                 y = "Case count")
+          
+          bottom_panel <- b %>% 
+            mutate(color = case_when(observed == 0 ~ "#FFFFFF00", 
+                                     alert == TRUE & two_or_more == TRUE & (absolute_mag == TRUE | relative_mag == TRUE) ~ "firebrick4", 
+                                     alert == TRUE & (absolute_mag == TRUE | relative_mag == TRUE) ~ "blueviolet" , 
+                                     alert == TRUE ~ "cadetblue", 
+                                     alert == FALSE ~ "grey", 
+                                     is.na(alert) ~ "grey",
+                                     .default = "black"), 
+                   Shehia = str_to_title(str_replace_all(shehia, "_", " "))) %>% 
+            ggplot()+
+            geom_tile(aes(x = week, y = Shehia, fill = color))+
+            theme_minimal()+
+            scale_fill_identity()+
+            labs(x = "Week", 
+                 y = "Shehia")
+          
+          cowplot::plot_grid(top_panel, NULL, bottom_panel, 
+                             ncol = 1, 
+                             rel_heights = c(1,-0.2, 1),
+                             align = "hv", 
+                             axis = "tblr")
+            })
+
+
+
+b[[1]]
+
+```
+
+```{r eval = FALSE}
+# for review of select shehias in context of districts
+
+pulled_shehia <- shehia_interest %>% 
+  split(.$district)
+
+alarm_district1 <- alarm_district %>% 
+  purrr::discard(names(alarm_district) == "mkoani")
+
+alarm_shehia1 <- alarm_shehia %>% 
+  purrr::discard(names(alarm_shehia) == "mkoani")
+
+
+test <- pulled_shehia[[3]] %>% 
+            mutate(shehia1 = str_to_title(str_replace_all(shehia, "_", " "))) %>% 
+            pull(shehia1)
+
+b1 <- pmap(list(alarm_district1, 
+                alarm_shehia1,
+                names(alarm_shehia1),
+                pulled_shehia),
+          function(a,b,c,d){top_panel <- a %>% 
+            as_tibble() %>% 
+            ggplot()+
+            geom_col(aes(x = week, y = observed, fill = color_fill))+
+            scale_fill_identity()+
+            geom_line(aes(x = week, y = threshold), 
+                      col='cadetblue',
+                      linetype = "dotdash", 
+                      lwd = 1)+
+            geom_line(aes(x = week, y = threshold_01), 
+                      col='#3b5d61',
+                      linetype = "dotdash", 
+                      lwd = 0.7)+
+            geom_line(aes(x = week, y = threshold_w3), 
+                      col='#a2c4c9',
+                      linetype = "dotdash", 
+                      lwd = 0.7)+
+            theme_minimal()+
+            theme(legend.position = "none", 
+                  axis.title.x=element_blank(),
+                  axis.text.x=element_blank(),
+                  axis.ticks.x=element_blank())+
+            labs(title = str_to_title(str_replace_all(c, "_", " ")), 
+                 x = element_blank(), 
+                 y = "Case count")
+          
+          order <- d %>% 
+            mutate(shehia1 = str_to_title(str_replace_all(shehia, "_", " "))) %>% 
+            pull(shehia1)
+          
+          order1 <- d %>% 
+            mutate(shehia1 = factor(str_to_title(str_replace_all(shehia, "_", " ")))) 
+          
+          bottom_panel1 <- b %>% 
+            mutate(color = case_when(observed == 0 ~ "#FFFFFF00", 
+                                     alert == TRUE & two_or_more == TRUE & (absolute_mag == TRUE | relative_mag == TRUE) ~ "firebrick4", 
+                                     alert == TRUE & (absolute_mag == TRUE | relative_mag == TRUE) ~ "blueviolet" , 
+                                     alert == TRUE ~ "cadetblue", 
+                                     alert == FALSE ~ "grey", 
+                                     is.na(alert) ~ "grey",
+                                     .default = "black"), 
+                   Shehia = factor(str_to_title(str_replace_all(shehia, "_", " "))), 
+                   Shehia = fct_relevel(Shehia, order)
+                   )
+          
+          bottom_panel <- ggplot()+
+            geom_tile(data = bottom_panel1, aes(x = week, y = reorder(Shehia, desc(Shehia)),
+                          fill = color))+
+            theme_minimal()+
+            scale_fill_identity()+
+            labs(x = "Week", 
+                 y = "Shehia"
+                 )+
+            theme(axis.text.y=element_text(face=ifelse(rev(levels(bottom_panel1$Shehia)) %in% order1$shehia1,
+                                   "bold.italic","plain"), 
+                                   size = 7))
+          
+          cowplot::plot_grid(top_panel, NULL, bottom_panel, 
+                             ncol = 1, 
+                             rel_heights = c(1,-0.2, 1),
+                             align = "hv", 
+                             axis = "tblr")
+            })
+
+filnames <- map(names(alarm_district1), 
+                ~paste0(here::here("pdf_report", "alarms_district_for_review"), "/", .x, 
+                        ".png"))
+map2(filnames, 
+     b1, 
+     ~ggsave(plot = .y, filename = .x, 
+             dpi = 700,
+             height = 6.5, 
+             width = 6.5, 
+             units = "in"))
+
+```
+
+
+```{r, include = FALSE}
+filnames <- map(names(alarm_district), 
+                ~paste0(here::here("pdf_report", "alarms_district"), "/", .x, 
+                        ".png"))
+map2(filnames, 
+     b, 
+     ~ggsave(plot = .y, filename = .x, 
+             dpi = 700,
+             height = 8, 
+             width = 10, 
+             units = "in"))
+
+ouput <- map(alarm_district, ~.x %>% 
+  select(-c(geo_week, first_in_run, any_defcon, ever_exceeded)) %>% 
+  mutate(defcon1 = case_match(defcon1, "grey" ~ "no", 
+                              "firebrick4" ~ "yes"), 
+         defcon2 = case_match(defcon2, "grey" ~ "no", 
+                              "firebrick4" ~ "yes")) %>% 
+  rename(meets_criteria_on_own = defcon1, 
+         week_part_or_outbreak = defcon2, 
+         oberserved_greater_than_expected = alert)
+         ) %>% 
+  list_rbind()
+
+rio::export(ouput, "figures/output_data_to_accompany_figures1.xlsx")
+
+
+######## shehia of interest files
+
+a <- shehia_interest %>% 
+  mutate(present = district_shehia %in% filtered_shehia_alerts1$district_shehia)
+
+# chakechake ole is of interest, but doesn't seem to be present in the filtered data
+rm(a)
+
+temp <- filtered_distict_alerts1 %>% 
+  group_by(district) %>% 
+  mutate(start_real = case_when(color_fill == "firebrick4" & (lag(color_fill)== "grey" | lag(color_fill)== "grey20" )~"yes", 
+                                color_fill == "firebrick4" & lag(color_fill)== "firebrick4"~"no", 
+                                color_fill == "grey" ~ NA_character_, 
+                                .default = "error"), 
+         stop_real = case_when(color_fill == "firebrick4" & (lead(color_fill)== "grey" | lead(color_fill)== "grey20") ~"yes", 
+                                color_fill == "firebrick4" & lead(color_fill)== "firebrick4"~"no", 
+                                color_fill == "grey" ~ NA_character_, 
+                                .default = "error")) %>% 
+  ungroup() %>% 
+  mutate(stop_real1 = case_when(stop_real == "error" & as.character(week) == "2024-09-16" ~ "yes", 
+                             #   stop_real == "error" & is.na(lead(comp)) ~ "yes", 
+                                .default = stop_real)) %>% 
+  split(.$district)
+
+
+b <- temp %>% 
+        map(~.x %>% 
+              filter(start_real == "yes") %>% 
+              pull(week) %>% 
+              as_tibble()
+            )
+      
+
+c <- temp %>% 
+        map(~.x %>% 
+              filter(stop_real1 == "yes") %>% 
+              pull(week) %>% 
+              as_tibble()
+            )
+
+### attempt to insert dark grey background
+
+temp <- filtered_distict_alerts1 %>% 
+  group_by(district) %>% 
+  mutate(start_real_red = case_when(color_fill == "firebrick4" & (lag(color_fill)== "grey" | lag(color_fill)== "grey20" )~"yes", 
+                                color_fill == "firebrick4" & lag(color_fill)== "firebrick4"~"no", 
+                                color_fill == "grey" | color_fill == "grey20" ~ NA_character_, 
+                                .default = "error"), 
+         stop_real_red = case_when(color_fill == "firebrick4" & (lead(color_fill)== "grey" | lead(color_fill)== "grey20") ~"yes", 
+                                color_fill == "firebrick4" & lead(color_fill)== "firebrick4"~"no", 
+                                color_fill == "grey" | color_fill == "grey20" ~ NA_character_, 
+                                .default = "error"),
+         start_real_grey = case_when(color_fill == "grey20" & (lag(color_fill)== "grey" | lag(color_fill)== "firebrick4" )~"yes", 
+                                color_fill == "grey20" & lag(color_fill)== "grey20"~"no", 
+                                color_fill == "grey" | color_fill == "firebrick4" ~ NA_character_, 
+                                .default = "error"), 
+         stop_real_grey = case_when(color_fill == "grey20" & (lead(color_fill)== "grey" | lead(color_fill)== "firebrick4") ~"yes", 
+                                color_fill == "grey20" & lead(color_fill)== "grey20"~"no", 
+                                color_fill == "grey" | color_fill == "firebrick4" ~ NA_character_, 
+                                .default = "error")) %>% 
+  ungroup() %>% 
+  mutate(stop_real_red1 = case_when(stop_real_red == "error" & as.character(week) == "2024-09-16" ~ "yes", 
+                             #   stop_real == "error" & is.na(lead(comp)) ~ "yes", 
+                                .default = stop_real_red)) %>% 
+  split(.$district)
+
+
+b_red <- temp %>% 
+        map(~.x %>% 
+              filter(start_real_red == "yes") %>% 
+              pull(week) %>% 
+              as_tibble() %>% 
+              mutate(value = value - lubridate::ddays(3))
+            )
+      
+
+c_red <- temp %>% 
+        map(~.x %>% 
+              filter(stop_real_red1 == "yes") %>% 
+              pull(week) %>% 
+              as_tibble() %>% 
+              mutate(value = value + lubridate::ddays(4))
+            )
+
+b_grey <- temp %>% 
+        map(~.x %>% 
+              filter(start_real_grey == "yes") %>% 
+              pull(week) %>% 
+              as_tibble()%>% 
+              mutate(value = value - lubridate::ddays(3))
+            )
+      
+
+c_grey <- temp %>% 
+        map(~.x %>% 
+              filter(stop_real_grey == "yes") %>% 
+              pull(week) %>% 
+              as_tibble() %>% 
+              mutate(value = value + lubridate::ddays(4))
+            )
+
+#  d <- temp %>% 
+#          map(~.x %>% 
+#                filter(start_real == "yes") %>% 
+#                pull(color_fill) %>% 
+#                as_tibble()
+#              )
+#  
+
+recs_red <- map2(b_red, c_red,
+             function(w,y) bind_cols(w,y)) %>% 
+  map(~.x %>% 
+        rename(start = 1, 
+               stop = 2))
+
+recs_grey <- map2(b_grey, c_grey,
+             function(w,y) bind_cols(w,y)) %>% 
+  map(~.x %>% 
+        rename(start = 1, 
+               stop = 2))
+
+
+recs_df_grey <- recs_grey %>% 
+  list_rbind(names_to = "district") %>% 
+  group_by(district) %>% 
+  nest()
+
+recs_df <- recs_red %>% 
+  list_rbind(names_to = "district") %>% 
+  group_by(district) %>% 
+  nest() %>% 
+  left_join(recs_df_grey, by = "district") %>% 
+  rename(red = data.x, 
+         grey = data.y)
+
+###########################
+
+
+
+#  recs_df <- recs %>% 
+#    list_rbind(names_to = "district") %>% 
+#    group_by(district) %>% 
+#    nest()
+#  
+#  
+#  
+#  recs <- map2(b,c,
+#               function(w,z) bind_cols(w,z)) %>% 
+#    map(~.x %>% 
+#          rename(start = 1, 
+#                 stop = 2))
+#  
+#  recs_df <- recs %>% 
+#    list_rbind(names_to = "district") %>% 
+#    group_by(district) %>% 
+#  nest()
+gc()
+shehia_figs_list <- filtered_shehia_alerts1 %>% 
+  filter(district_shehia %in% shehia_interest$district_shehia) %>% 
+  distinct(district, shehia) %>% 
+  left_join(recs_df, by = "district")
+
+map_c <- shehia_figs_list$red
+map_d <- shehia_figs_list$grey
+
+shehia_figs <- filtered_shehia_alerts1 %>% 
+  filter(district_shehia %in% shehia_interest$district_shehia) %>% 
+  split(.$district_shehia)
+
+
+shehias_of_note <- pmap(list(shehia_figs, 
+                             names(shehia_figs),
+                             map_c, 
+                             map_d),
+          function(a,b,c,d){
+            title <-  str_to_title(str_replace_all(str_replace_all(b, "_", " "), 
+                                                   "-", " "))
+            
+            data <- a %>% 
+            as_tibble() 
+            
+            if(is.null(d)){
+            
+            fig <- ggplot()+
+            geom_rect(data=c, aes(ymin=0, ymax=Inf,
+                                  xmin=start, xmax=stop, 
+                                  fill = "firebrick4"),
+              alpha =0.2)+  
+            geom_col(data = data, aes(x = week, y = observed, fill = defcon2), 
+                     color = "black")+
+            scale_fill_identity()+
+            geom_line(data = data, aes(x = week, y = threshold), 
+                      col='cadetblue',
+                      linetype = "dotdash", 
+                      lwd = 1)+
+            theme_minimal()+
+            scale_x_yearmonth(date_breaks = "5 weeks", 
+                              date_labels = paste0("%Y", "- W", "%V"))+
+            theme(legend.position = "none", 
+                  axis.text.x = element_text(angle = 90, vjust = 0.5)
+              #    axis.text.x=element_blank(),
+              #    axis.ticks.x=element_blank()
+              )+
+            labs(title = title, 
+                 x = "Week", 
+                 y = "Case count")} else { fig <- ggplot()+
+            geom_rect(data=c, aes(ymin=0, ymax=Inf,
+                                  xmin=start, xmax=stop, 
+                                  fill = "firebrick4"),
+              alpha =0.2)+  
+              geom_rect(data=d, aes(ymin=0, ymax=Inf,
+                                  xmin=start, xmax=stop, 
+                                  fill = "grey20"),
+              alpha =0.2)+ 
+            geom_col(data = data, aes(x = week, y = observed, fill = defcon2), 
+                     color = "black")+
+            scale_fill_identity()+
+            geom_line(data = data, aes(x = week, y = threshold), 
+                      col='cadetblue',
+                      linetype = "dotdash", 
+                      lwd = 1)+
+            theme_minimal()+
+            scale_x_yearmonth(date_breaks = "5 weeks", 
+                              date_labels = paste0("%Y", "- W", "%V"))+
+            theme(legend.position = "none", 
+                  axis.text.x = element_text(angle = 90, vjust = 0.5)
+              #    axis.text.x=element_blank(),
+              #    axis.ticks.x=element_blank()
+              )+
+            labs(title = title, 
+                 x = "Week", 
+                 y = "Case count")
+                   
+                 }
+            
+            return(fig)
+          }
+)
+
+
+filenames <- map2(shehia_figs_list$district, 
+                  shehia_figs_list$shehia,
+                ~paste0(here::here("pdf_report", "alarms_shehia", .x), "/", .y, 
+                        ".png"))
+map2(filenames, 
+     shehias_of_note, 
+     ~ggsave(plot = .y, filename = .x, 
+             dpi = 700,
+             height = 5.7, 
+             width = 6.5, 
+             units = "in"))
+
+```
+
+
+### Kaskazini A 
+```{r message=FALSE}
+b[[2]]
+```
+
+
+### Kaskazini B
+```{r message=FALSE}
+b[[3]]
+
+```
+
+
+### Kati
+```{r message=FALSE}
+b[[4]]
+
+```
+
+
+### Kusini
+```{r message=FALSE}
+b[[5]]
+
+```
+
+
+### Magharibi A
+```{r message=FALSE}
+b[[6]]
+
+```
+
+
+### Magharibi B
+```{r message=FALSE}
+b[[7]]
+
+```
+
+
+### Micheweni
+```{r message=FALSE}
+b[[8]]
+
+```
+
+
+### Mjini
+```{r message=FALSE}
+b[[9]]
+
+```
+
+
+### Mkoani
+```{r message=FALSE}
+b[[10]]
+
+```
+
+
+### Wete
+```{r message=FALSE}
+b[[11]]
+
+```
+
+```{r echo=FALSE}
+# writes to Excel files
+
+alarm_district %>% 
+  map(~.x %>% 
+        select(-defcon1) %>% 
+        rename(color = defcon2) %>% 
+        mutate(real_outbreak = case_when(color == "grey" ~ "no", 
+                                         color == "firebrick4" ~ "yes", 
+                                         .default = "error"))) %>% 
+  map2(., names(alarm_district), 
+       ~rio::export(.x, paste0("district_alerts/", .y, ".xlsx")))
+
+
+rio::export(filtered_shehia_alerts1 %>% 
+  mutate(defcon1 = case_when(alert == FALSE ~ "no", 
+                            alert == TRUE & (absolute_mag == TRUE | relative_mag == TRUE) & two_or_more == TRUE ~ "yes", 
+                            .default = "no"),
+         real_outbreak = case_when(defcon1 == "yes" ~ "yes", 
+                            alert == TRUE & (lag(defcon1) == "yes" | lead(defcon1) == "yes") ~ "yes", 
+                            .default = "no")) %>% 
+  select(-defcon1), 
+  "gold_std_shehia_alerts.xlsx")
+
+```
+
+
+## **Anomalous counts - local only** {.tabset .tabset-pills}
+
+### Chakechake
+```{r}
+##########################################################################
+##  LOCAL ONLY! ################################################
+#########################################################################
+data <- rio::import("deduped_unfiltered_data.xlsx") %>%  # 65244 obs
+  select(-date_fix) %>% 
+  rename(date_fix = date) %>% 
+  filter(!case_classification_categories %in% c("imported", "introduced")) 
+
+data_filtered <- rio::import("data_filtered_for_tst.xlsx")%>% 
+  filter(!case_classification_categories %in% c("imported", "introduced")) 
+
+
+filtered_district_alerts <- rio::import("filtered_district_local_alert_1.xlsx")
+
+filtered_shehia_alerts <- rio::import("filtered_shehia_local_alert_1.xlsx")
+
+filtered_district_local_alpha01 <- rio::import("filtered_district_local_alert_01.xlsx")
+
+
+dist_shehia <- znz_sf %>% 
+  select(district_n, shehia_nam) %>% 
+  sf::st_drop_geometry()
+
+filtered_shehia_alerts1 <- filtered_shehia_alerts %>% 
+  select(-all_of(starts_with("population"))) %>% 
+  select(-all_of(starts_with("state")))%>% 
+  select(-all_of(starts_with("alarm"))) %>% 
+  pivot_longer(-epoch) %>% 
+  mutate(type = word(name, 1, sep = "\\."), 
+         district_shehia = word(name, 2, sep = "\\.")) %>% 
+  select(-name) %>% 
+  left_join(., ., by = c("epoch", "district_shehia")) %>% 
+  filter(type.x == "observed" & type.y == "upperbound") %>% 
+  mutate(alert = value.x > value.y, 
+         outbreak_mag = case_when(alert == TRUE ~ value.x - value.y, 
+                               .default = NA_real_)) %>% 
+  rename(observed = value.x, 
+         threshold = value.y, 
+         week = epoch) %>% 
+  select(-c(type.x, type.y)) %>% 
+  arrange(district_shehia, week) %>% 
+  group_by(district_shehia) %>% 
+  mutate(geo_week = row_number(), 
+         two_or_more = case_when((lag(alert) == TRUE & alert == TRUE) |
+                                   (lead(alert) == TRUE & alert == TRUE) ~ TRUE, 
+                                 .default = FALSE),
+         absolute_mag = case_when(outbreak_mag > 4 ~ TRUE, 
+                                  outbreak_mag <= 4 ~ FALSE, 
+                                  .default = NA), 
+         relative_mag = case_when(alert == FALSE ~ NA,
+                                  observed/threshold >= 3 ~ TRUE, 
+                                  observed/threshold < 3 ~ FALSE, 
+                                  .default = NA)
+         ) %>% 
+  ungroup() %>% 
+  mutate(district = word(district_shehia, 1, sep = "-"), 
+         shehia = word(district_shehia, 2, sep = "-"))
+ # left_join(dist_shehia, by = c("shehia" = "shehia_nam"))
+
+filtered_distict_alerts1 <- filtered_district_alerts %>% 
+  select(-all_of(starts_with("population"))) %>% 
+  select(-all_of(starts_with("state")))%>% 
+  select(-all_of(starts_with("alarm"))) %>% 
+  pivot_longer(-epoch) %>% 
+  mutate(type = word(name, 1, sep = "\\."), 
+         district = word(name, 2, sep = "\\.")) %>% 
+  select(-name) %>% 
+  left_join(., ., by = c("epoch", "district")) %>% 
+  filter(type.x == "observed" & type.y == "upperbound") %>% 
+  mutate(alert = value.x > value.y, 
+         outbreak_mag = case_when(alert == TRUE ~ value.x - value.y, 
+                               .default = NA_real_)) 
+
+
+
+filtered_district_local_threshold_01 <- filtered_district_local_alpha01 %>% 
+  select(epoch, starts_with("upperbound")) %>% 
+  pivot_longer(-epoch) %>% 
+  mutate(district = word(name, 2, sep = "\\.")) %>% 
+  select(-name) %>% 
+  rename(threshold_01 = value)
+
+filtered_distict_alerts1 <- filtered_distict_alerts1 %>% 
+    left_join(filtered_district_local_threshold_01, by = c("epoch", "district")) %>% 
+  rename(observed = value.x, 
+         threshold = value.y, 
+         week = epoch) %>% 
+  select(-c(type.x, type.y)) %>% 
+  arrange(district, week) %>% 
+  group_by(district) %>% 
+  mutate(geo_week = row_number(), 
+         two_or_more = case_when((lag(alert) == TRUE & alert == TRUE) |
+                                   (lead(alert) == TRUE & alert == TRUE) ~ TRUE, 
+                                 .default = FALSE),
+         absolute_mag = case_when(outbreak_mag > 4 ~ TRUE, 
+                                  outbreak_mag <= 4 ~ FALSE, 
+                                  .default = NA), 
+         relative_mag = case_when(alert == FALSE ~ NA,
+                                  observed/threshold >= 3 ~ TRUE, 
+                                  observed/threshold < 3 ~ FALSE, 
+                                  .default = NA), 
+         defcon1 = case_when(alert == FALSE ~ "grey", 
+                            alert == TRUE & (absolute_mag == TRUE | relative_mag == TRUE) & two_or_more == TRUE ~ "firebrick4", 
+                            .default = "grey"),
+         first_in_run = case_when(alert == TRUE & lag(alert) == FALSE ~ week, 
+                                  .default = NA)) %>% 
+  fill(first_in_run, .direction = "down") %>% 
+  ungroup() %>% 
+  mutate(first_in_run = ifelse(alert == TRUE, first_in_run, NA)) %>% 
+  group_by(district, first_in_run) %>% 
+  mutate(any_defcon = ifelse(alert == TRUE, list(defcon1), NA)) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(ever_exceeded = "firebrick4" %in% any_defcon, 
+          defcon2 = case_when(ever_exceeded == TRUE ~ "firebrick4", 
+                              .default = "grey")) %>% 
+  ungroup()
+
+
+
+
+
+
+alarm_district <- map(c(sort(unique(filtered_distict_alerts1$district))), 
+                      ~filtered_distict_alerts1 %>% 
+                        filter(district == .x)) %>% 
+  set_names(c(sort(unique(filtered_distict_alerts1$district))))
+
+
+alarm_shehia <- map(c(sort(unique(filtered_shehia_alerts1$district))), 
+                      ~filtered_shehia_alerts1 %>% 
+                        filter(district == .x)) %>% 
+  set_names(c(sort(unique(filtered_shehia_alerts1$district))))
+
+
+b <- pmap(list(alarm_district, 
+               alarm_shehia,
+          sort(unique(filtered_shehia_alerts1$district))),
+              # sort(unique(filtered_shehia_alerts1$district_n))), 
+          function(a,b,c){top_panel <- a %>% 
+            as_tibble() %>% 
+          #  rename_with(function (y)str_remove_all(y, paste0(".", c))) %>%
+            mutate(alarm_1 = factor(case_when(alert == TRUE ~ 1, 
+                             .default = 0))) %>% 
+            ggplot()+
+            geom_col(aes(x = week, y = observed, fill = defcon2))+
+            scale_fill_identity()+
+           # scale_fill_manual(values = c("grey", "tomato3"))+
+            geom_line(aes(x = week, y = threshold), 
+                      col='cadetblue4',
+                      linetype = "dotdash", 
+                      lwd = 1)+
+            geom_line(aes(x = week, y = threshold_01), 
+                      col='#3b5d61',
+                      linetype = "dotdash", 
+                      lwd = 0.7)+
+            theme_minimal()+
+            theme(legend.position = "none", 
+                  axis.title.x=element_blank(),
+                  axis.text.x=element_blank(),
+                  axis.ticks.x=element_blank())+
+            labs(title = str_to_title(str_replace_all(c, "_", " ")), 
+                 x = element_blank(), 
+                 y = "Case count")
+          
+          bottom_panel <- b %>% 
+            mutate(color = case_when(observed == 0 ~ "#FFFFFF00", 
+                                     alert == TRUE & two_or_more == TRUE & (absolute_mag == TRUE | relative_mag == TRUE) ~ "firebrick4", 
+                                  #   alert == TRUE & two_or_more == TRUE ~ "darkgoldenrod", 
+                                     alert == TRUE & (absolute_mag == TRUE | relative_mag == TRUE) ~ "blueviolet" , 
+                                     alert == TRUE ~ "cadetblue", 
+                                     alert == FALSE ~ "grey", 
+                                     is.na(alert)~ "grey",
+                                     .default = "black")) %>% 
+            ggplot()+
+            geom_tile(aes(x = week, y = shehia, fill = color))+
+            theme_minimal()+
+            scale_fill_identity()+
+            labs(x = "Week", 
+                 y = "Shehia")
+          
+          cowplot::plot_grid(top_panel, NULL, bottom_panel, 
+                             ncol = 1, 
+                             rel_heights = c(1,-0.1, 1),
+                             align = "hv", 
+                             axis = "tblr")
+            })
+
+  
+
+b[[1]]
+
+```
+
+### Kaskazini A 
+```{r message=FALSE}
+b[[2]]
+```
+
+
+### Kaskazini B
+```{r message=FALSE}
+b[[3]]
+
+```
+
+
+### Kati
+```{r message=FALSE}
+b[[4]]
+
+```
+
+
+### Kusini
+```{r message=FALSE}
+b[[5]]
+
+```
+
+
+### Magharibi A
+```{r message=FALSE}
+b[[6]]
+
+```
+
+
+### Magharibi B
+```{r message=FALSE}
+b[[7]]
+
+```
+
+
+### Micheweni
+```{r message=FALSE}
+b[[8]]
+
+test <- alarm_shehia[[8]]
+
+```
+
+
+### Mjini
+```{r message=FALSE}
+b[[9]]
+
+```
+
+
+### Mkoani
+```{r message=FALSE}
+b[[10]]
+
+```
+
+
+### Wete
+```{r message=FALSE}
+b[[11]]
+
+```
+
+```{r include = FALSE}
+# writes to Excel files
+
+alarm_district %>% 
+  map(~.x %>% 
+        select(-defcon1) %>% 
+        rename(color = defcon2) %>% 
+        mutate(real_outbreak = case_when(color == "grey" ~ "no", 
+                                         color == "firebrick4" ~ "yes", 
+                                         .default = "error"))) %>% 
+  map2(., names(alarm_district), 
+       ~rio::export(.x, paste0("district_alerts/local/", .y, ".xlsx")))
+
+
+rio::export(filtered_shehia_alerts1 %>% 
+  mutate(defcon1 = case_when(alert == FALSE ~ "no", 
+                            alert == TRUE & (absolute_mag == TRUE | relative_mag == TRUE) & two_or_more == TRUE ~ "yes", 
+                            .default = "no"),
+         real_outbreak = case_when(defcon1 == "yes" ~ "yes", 
+                            alert == TRUE & (lag(defcon1) == "yes" | lead(defcon1) == "yes") ~ "yes", 
+                            .default = "no")) %>% 
+  select(-defcon1), 
+  "gold_std_shehia_alerts_local.xlsx")
+
+# writes figures to png
+
+filnames <- map(names(alarm_district), 
+                ~paste0(here::here("pdf_report", "alarms_district", "local"),
+                        "/", .x, 
+                        ".png"))
+map2(filnames, 
+     b, 
+     ~ggsave(plot = .y, filename = .x, 
+             dpi = 700,
+             height = 6.8, 
+             width = 8.5, 
+             units = "in"))
+
+```
+
+```{r eval = FALSE}
+
+
+
+# seq() and arithmetic
+wk1 <- yearweek("2022 W03")
+wk2 <- yearweek("2024 W37")
+b1 <- tibble(week = seq(from = wk1, to = wk2, by = 1))
+b <- add_column(b1, n = rep(0, nrow(b1)))  
+
+
+fac_all <- data_filtered %>% 
+  group_by(district_for_shehia) %>% 
+  summarise(fac = list(unique(facility))) %>% 
+  ungroup() %>% 
+  add_column(weeks = rep(list(as_vector(b[,1])), 11)) %>% 
+  unnest_longer(fac) %>% 
+  unnest_longer(weeks) %>% 
+  mutate(weeks = yearweek(as.Date(weeks))) %>% 
+  split(.$district_for_shehia)
+
+
+fac_loc <- data_filtered %>% 
+  split(.$district_for_shehia) %>% 
+  map(~.x %>% 
+  count(facility, shehia) %>% 
+  group_by(facility) %>% 
+  slice_max(n, n = 1, with_ties = FALSE) %>% 
+  ungroup() %>% 
+  arrange(shehia)
+  )
+
+fac_agg <- data_filtered %>% 
+  split(.$district_for_shehia) %>% 
+  map2(., fac_all, function(a,b){a %>% 
+      filter(date_fix >="2022-01-17") %>% 
+  mutate(year_week = yearweek(date_fix)) %>% 
+  count(year_week, facility) %>% 
+  complete(year_week, facility, fill = list(n=0)) %>% 
+      right_join(b, by = c("year_week" = "weeks", 
+                          "facility" = "fac"))}
+  ) %>% 
+  map(~.x %>% 
+        mutate(n = replace_na(n, 0))) %>% 
+  map2(fac_loc, ~.x %>% 
+         mutate(facility1 = factor(facility,
+                                   levels =.y$facility), 
+                facility1 = str_to_title(str_replace_all(facility1, "_", " "))
+                )
+       )
+
+
+col <- colorRampPalette(colors = c("black","#0e1861",
+                            "#3F0F72FF", "#75161a", "#a9641f", 
+                            "#dbc579", "#FCFDBFFF", "white"), bias = 2.5)
+
+
+
+#a1 <- a %>% 
+#  map(~.x+
+#        theme(legend.position = "none"))
+
+b <- pmap(list(alarm_district, 
+               fac_agg,
+          sort(unique(filtered_shehia_alerts1$district))),
+              # sort(unique(filtered_shehia_alerts1$district_n))), 
+          function(a,b,c){top_panel <- a %>% 
+            as_tibble() %>% 
+          #  rename_with(function (y)str_remove_all(y, paste0(".", c))) %>%
+            mutate(alarm_1 = factor(case_when(alert == TRUE ~ 1, 
+                             .default = 0))) %>% 
+            ggplot()+
+            geom_col(aes(x = week, y = observed, fill = defcon2))+
+            scale_fill_identity()+
+            geom_line(aes(x = week, y = threshold), 
+                      col='cadetblue',
+                      linetype = "dotdash", 
+                      lwd = 1)+
+            geom_line(aes(x = week, y = threshold_01), 
+                      col='#3b5d61',
+                      linetype = "dotdash", 
+                      lwd = 0.7)+
+            geom_line(aes(x = week, y = threshold_w3), 
+                      col='#a2c4c9',
+                      linetype = "dotdash", 
+                      lwd = 0.7)+
+            theme_minimal()+
+            theme(legend.position = "none", 
+                  axis.title.x=element_blank(),
+                  axis.text.x=element_blank(),
+                  axis.ticks.x=element_blank()
+                  )+
+            labs(title = str_to_title(str_replace_all(c, "_", " ")), 
+                 x = element_blank(), 
+                 y = "Case count")
+          
+          bottom_panel1 <- ggplot()+
+            geom_raster(data = b, aes(x = year_week, y = facility1, fill = n))+
+            scale_fill_gradientn(colours = col(50))+
+            theme_minimal()+
+            labs(x = "Epidemiological Week", 
+                 y = "Facility", 
+                 fill = "Reported\nCases")
+          
+          bottom_panel <- bottom_panel1 +
+            theme(legend.position = "none")
+          
+          legend <- cowplot::get_legend(bottom_panel1)
+          
+          cowplot::plot_grid(cowplot::plot_grid(top_panel, NULL, bottom_panel, 
+                             ncol = 1, 
+                             rel_heights = c(1,-0.2, 1),
+                             align = "hv", 
+                             axis = "tblr"),
+                             cowplot::ggdraw(legend), 
+                             ncol = 2, 
+                             rel_widths = c(1, 0.1))
+            })
+
+map2(b, names(b), 
+     ~ggsave(plot = .x, 
+             filename = paste0(here::here("pdf_report", "facility_district_alarms"), 
+             "/", .y, ".png"), 
+             width = 8.5, 
+             height = 6.8, 
+             units = "in")
+)
+
+
+```
+
+
+## **Explanation of plots**
+Plots below show the number of reported malaria cases in each district by 
+epiweek. The dashed blue lines are the outbreak threshold calculated using the 
+improved Farrington algorithm at different thresholds (light blue: alpha = 0.1, 
+darker blue: alpha = 0.01, lower alpha is less sensitive, more specific), bar 
+fill color indicates those in ‘outbeak’ (red) versus within expected limits 
+(grey). Two additional bar colors represent weeks that were flagged by the 
+algorithm, but determined by ZAMPE to not be an actionable event (dark grey) and 
+those not flagged by the algorithm but determined to be an actionable anomaly 
+(yellow-orange). ‘Outbreak’ was determined by weekly case counts exceeding the 
+calculated threshold for at least two consecutive weeks, at least one of which 
+exceeding the threshold by 4 cases or 300%.
+
+The lower panels depict categorization of weekly case counts reported at 
+individual shehias within the district. Grey indicates weeks with reported 
+malaria cases that did not surpass the calculated threshold; blue indicates an 
+epiweek when the cases reported by a shehia exceeded its epidemic threshold 
+without fulfilling ancillary requirements (i.e., absolute/relative magnitude and
+at least two consecutive weeks of higher-than-threshold reported cases); purple 
+represents an epiweek that was at least 4 cases above or 3x the calculated 
+threshold; red indicates that cases reported in the shehia were both at least 4 
+cases above or 3x the calculated threshold AND part of a string of at least two 
+consecutive weeks when counts reported by the shehia exceeded the calculated 
+threshold.
